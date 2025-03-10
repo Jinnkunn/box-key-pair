@@ -14,6 +14,52 @@ import pickle
 # Create output directory if it doesn't exist
 os.makedirs('./output', exist_ok=True)
 
+# Unified color scheme
+COLOR_PALETTE = {
+    'primary': '#1976D2',    # Primary blue
+    'secondary': '#43A047',  # Secondary green
+    'accent': '#E53935',     # Accent red
+    'neutral': '#757575',    # Neutral gray
+    'highlight': '#FDD835',  # Highlight yellow
+    'boys': '#2196F3',      # Boys color
+    'girls': '#E91E63'      # Girls color
+}
+
+# Parameter color mapping
+PARAM_COLORS = {
+    'theta': COLOR_PALETTE['primary'],     # Learning ability
+    'omega': COLOR_PALETTE['secondary'],   # Social influence
+    'r': COLOR_PALETTE['accent'],         # Exploration rate
+    'motor': COLOR_PALETTE['highlight']   # Motor skill
+}
+
+# Strategy color mapping
+STRATEGY_COLORS = {
+    'Color': '#1f77b4',
+    'Number': '#2ca02c',
+    'Shape': '#d62728',
+    'None': COLOR_PALETTE['neutral']
+}
+
+# Unified chart style settings
+plt.style.use('seaborn-v0_8-whitegrid')
+plt.rcParams.update({
+    'figure.facecolor': 'white',
+    'axes.facecolor': 'white',
+    'axes.grid': True,
+    'grid.alpha': 0.3,
+    'axes.labelsize': 12,
+    'axes.titlesize': 14,
+    'xtick.labelsize': 10,
+    'ytick.labelsize': 10,
+    'legend.fontsize': 10,
+    'legend.frameon': True,
+    'legend.framealpha': 0.8,
+    'legend.edgecolor': 'lightgray',
+    'savefig.dpi': 300,
+    'savefig.bbox': 'tight'
+})
+
 def calculate_success_probability(theta: float, motor_skill: float, omega: float, r: float) -> float:
     """Calculate success probability based on learning ability, motor skill, and strategy weights"""
     # Add small epsilon to avoid perfect motor skill
@@ -311,8 +357,8 @@ def create_parameter_evolution(df):
         'motor': ('Motor Skill (M)', '#FDD835')
     }
     
-    for idx, (param, (label, color)) in enumerate(params.items(), 1):  # Start enumeration from 1
-        plt.subplot(2, 2, idx)
+    for idx, (param, (label, color)) in enumerate(params.items()):
+        plt.subplot(2, 2, idx + 1)
         
         # Plot parameter values
         plt.scatter(df['age'], df[param], 
@@ -760,16 +806,97 @@ def create_enhanced_strategy_analysis(df):
     plt.savefig('./output/enhanced_strategy_analysis.png', dpi=300, bbox_inches='tight')
     plt.close()
 
+def create_gender_parameter_comparison(results_df, trial_data):
+    """
+    Create visualizations comparing parameter distributions between genders.
+    
+    Args:
+        results_df (pd.DataFrame): DataFrame containing parameter results
+        trial_data (pd.DataFrame): DataFrame containing trial data with gender information
+    """
+    # Correctly merge gender information
+    gender_info = trial_data.groupby('ID')['Gender'].first()
+    merged_df = results_df.copy()
+    merged_df['Gender'] = merged_df['ID'].map(gender_info)
+    
+    # Parameters to analyze
+    params = ['theta_mean', 'omega_mean', 'r_mean', 'motor']
+    param_labels = ['Theta (Learning Rate)', 'Omega (Forgetting Rate)', 'R (Reward Sensitivity)', 'Motor Noise']
+    
+    # Create figure
+    plt.figure(figsize=(15, 10))
+    
+    # Create violin plots for each parameter
+    for i, (param, label) in enumerate(zip(params, param_labels), 1):
+        plt.subplot(2, 2, i)
+        
+        # Get data for each gender
+        boys_data = merged_df[merged_df['Gender'] == 'Boy'][param]
+        girls_data = merged_df[merged_df['Gender'] == 'Girl'][param]
+        
+        # Create violin plot
+        positions = [1, 2]
+        parts = plt.violinplot([boys_data, girls_data], positions=positions, showmeans=True)
+        
+        # Customize violin plot colors
+        for pc in parts['bodies']:
+            pc.set_facecolor(COLOR_PALETTE['primary'])
+            pc.set_alpha(0.3)
+        parts['cmeans'].set_color(COLOR_PALETTE['accent'])
+        parts['cmaxes'].set_color(COLOR_PALETTE['neutral'])
+        parts['cmins'].set_color(COLOR_PALETTE['neutral'])
+        parts['cbars'].set_color(COLOR_PALETTE['neutral'])
+        
+        # Add scatter points
+        for j, (data, pos) in enumerate([(boys_data, 1), (girls_data, 2)]):
+            plt.scatter(np.random.normal(pos, 0.05, size=len(data)), data, 
+                       alpha=0.6, s=40, 
+                       c=COLOR_PALETTE['boys'] if j == 0 else COLOR_PALETTE['girls'])
+        
+        # Perform Mann-Whitney U test
+        stat, p_value = stats.mannwhitneyu(boys_data, girls_data, alternative='two-sided')
+        
+        # Calculate effect size (Cohen's d)
+        d = (boys_data.mean() - girls_data.mean()) / np.sqrt((boys_data.var() + girls_data.var()) / 2)
+        
+        # Add statistical results to plot with enhanced style
+        plt.text(0.05, 0.95, 
+                f'p = {p_value:.3f}\nd = {d:.2f}',
+                transform=plt.gca().transAxes,
+                verticalalignment='top',
+                bbox=dict(facecolor='white',
+                         alpha=0.9,
+                         edgecolor=COLOR_PALETTE['neutral'],
+                         boxstyle='round,pad=0.5'))
+        
+        # Customize plot
+        plt.title(f'{label} by Gender', pad=20)
+        plt.xticks(positions, ['Boys', 'Girls'])
+        plt.ylabel('Value')
+        
+        # Add grid with custom style
+        plt.grid(True, alpha=0.3, linestyle='--')
+        
+        # Print detailed statistics
+        print(f"\nStatistics for {label}:")
+        print(f"Boys (n={len(boys_data)}): mean={boys_data.mean():.3f}, std={boys_data.std():.3f}")
+        print(f"Girls (n={len(girls_data)}): mean={girls_data.mean():.3f}, std={girls_data.std():.3f}")
+        print(f"Mann-Whitney U test: p={p_value:.3f}")
+        print(f"Effect size (Cohen's d): {d:.3f}")
+    
+    plt.tight_layout()
+    plt.savefig('./output/gender_parameter_comparison.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
 def create_enhanced_parameter_distribution(results_df):
     """
-    Create enhanced parameter distribution visualization with statistical tests
+    Create Q-Q plots for parameter distributions
     
     Args:
         results_df: DataFrame containing analysis results
     """
-    # Create figure
-    fig = plt.figure(figsize=(20, 15))
-    gs = plt.GridSpec(3, 4)  # Change from 3x3 to 3x4 to accommodate all plots
+    # Create figure with adjusted size and spacing
+    fig = plt.figure(figsize=(16, 4))
     
     params = {
         'theta_mean': 'Learning Ability (θ)',
@@ -778,105 +905,153 @@ def create_enhanced_parameter_distribution(results_df):
         'motor': 'Motor Skill (M)'
     }
     
-    # 1. Q-Q plots and normality tests
+    # Q-Q plots and normality tests
     for idx, (param, label) in enumerate(params.items()):
-        ax = fig.add_subplot(gs[0, idx])
+        ax = plt.subplot(1, 4, idx + 1)
         
-        # Q-Q plot
+        # Q-Q plot with custom colors
         stats.probplot(results_df[param], dist="norm", plot=ax)
-        ax.set_title(f'{label}\nQ-Q Plot')
         
-        # Add Shapiro-Wilk test results
+        # Customize plot appearance
+        ax.get_lines()[0].set_markerfacecolor(PARAM_COLORS[param.split('_')[0]])
+        ax.get_lines()[0].set_markeredgecolor(COLOR_PALETTE['neutral'])
+        ax.get_lines()[0].set_alpha(0.6)
+        ax.get_lines()[1].set_color(COLOR_PALETTE['accent'])
+        
+        ax.set_title(f'{label}\nQ-Q Plot', pad=20)
+        
+        # Add Shapiro-Wilk test results with enhanced style
         stat, p_val = stats.shapiro(results_df[param])
-        ax.text(0.05, 0.95, f'Shapiro-Wilk Test:\nW={stat:.3f}\np={p_val:.3f}',
-                transform=ax.transAxes, bbox=dict(facecolor='white', alpha=0.8))
-    
-    # 2. Kernel density estimation and parameter distributions
-    ax_density = fig.add_subplot(gs[1, :2])
-    
-    for param, label in params.items():
-        sns.kdeplot(data=results_df, x=param, label=label)
-    
-    ax_density.set_title('Parameter Distributions with Kernel Density Estimation')
-    ax_density.legend()
-    
-    # Add descriptive statistics
-    stats_text = "Descriptive Statistics:\n\n"
-    for param, label in params.items():
-        desc = results_df[param].describe()
-        stats_text += f"{label}:\n"
-        stats_text += f"Mean: {desc['mean']:.3f}\n"
-        stats_text += f"Std: {desc['std']:.3f}\n"
-        stats_text += f"Skewness: {results_df[param].skew():.3f}\n"
-        stats_text += f"Kurtosis: {results_df[param].kurtosis():.3f}\n\n"
-    
-    ax_density.text(1.05, 0.5, stats_text,
-                   transform=ax_density.transAxes,
-                   bbox=dict(facecolor='white', alpha=0.8),
-                   verticalalignment='center')
-    
-    # 3. Age effects analysis
-    ax_age = fig.add_subplot(gs[1, 2:])
-    
-    # Calculate correlations with age
-    age_correlations = {}
-    for param, label in params.items():
-        corr, p_val = stats.pearsonr(results_df['age'], results_df[param])
-        age_correlations[label] = {'corr': corr, 'p_val': p_val}
-    
-    # Create correlation bar plot
-    corr_values = [v['corr'] for v in age_correlations.values()]
-    p_values = [v['p_val'] for v in age_correlations.values()]
-    
-    bars = ax_age.bar(params.values(), corr_values)
-    
-    # Add significance markers
-    for idx, (bar, p_val) in enumerate(zip(bars, p_values)):
-        if p_val < 0.001:
-            marker = '***'
-        elif p_val < 0.01:
-            marker = '**'
-        elif p_val < 0.05:
-            marker = '*'
-        else:
-            marker = 'ns'
+        ax.text(0.05, 0.95, 
+                f'Shapiro-Wilk Test:\nW={stat:.3f}\np={p_val:.3f}',
+                transform=ax.transAxes,
+                bbox=dict(facecolor='white',
+                         alpha=0.9,
+                         edgecolor=COLOR_PALETTE['neutral'],
+                         boxstyle='round,pad=0.5'),
+                verticalalignment='top')
         
-        ax_age.text(idx, bar.get_height(), marker,
-                   ha='center', va='bottom')
+        # Customize grid
+        ax.grid(True, alpha=0.3, linestyle='--')
     
-    ax_age.set_title('Age Effects on Parameters')
-    ax_age.set_ylabel('Correlation Coefficient')
-    plt.xticks(rotation=45)
-    
-    # 4. Parameter interaction effects
-    # Create a new figure for scatter matrix
-    scatter_fig = plt.figure(figsize=(12, 12))
-    axes = pd.plotting.scatter_matrix(results_df[list(params.keys())],
-                                    figsize=(12, 12),
-                                    diagonal='kde',
-                                    alpha=0.5)
-    
-    # Add correlation coefficients and p-values
-    for i in range(len(params)):
-        for j in range(len(params)):
-            if i != j:
-                param1 = list(params.keys())[i]
-                param2 = list(params.keys())[j]
-                corr, p_val = stats.pearsonr(results_df[param1], results_df[param2])
-                axes[i, j].text(0.05, 0.95,
-                              f'r={corr:.2f}\np={p_val:.3f}',
-                              transform=axes[i, j].transAxes,
-                              bbox=dict(facecolor='white', alpha=0.8))
-    
-    plt.suptitle('Parameter Interactions', y=1.02)
     plt.tight_layout()
-    plt.savefig('./output/parameter_interactions.png', dpi=300, bbox_inches='tight')
-    plt.close(scatter_fig)
+    plt.savefig('./output/parameter_qq_plots.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+def create_learning_influence_network(results_df):
+    """
+    Create visualization of learning influence network
     
-    # Save the main figure
-    plt.figure(fig.number)
+    Args:
+        results_df: DataFrame containing analysis results
+    """
+    G = nx.Graph()
+    
+    # Use stricter success rate threshold
+    success_threshold = results_df['success_rate'].mean() + 0.5 * results_df['success_rate'].std()
+    key_subjects = results_df[results_df['success_rate'] >= success_threshold]
+    
+    # Add nodes with additional information
+    for _, row in key_subjects.iterrows():
+        G.add_node(row['ID'], 
+                  omega=row['omega_mean'],
+                  success_rate=row['success_rate'],
+                  theta=row['theta_mean'],
+                  r=row['r_mean'])
+    
+    # Calculate similarity based on multiple parameters
+    for i, row1 in key_subjects.iterrows():
+        for j, row2 in key_subjects.iterrows():
+            if i < j:
+                # Calculate comprehensive similarity
+                omega_sim = 1 / (1 + abs(row1['omega_mean'] - row2['omega_mean']))
+                theta_sim = 1 / (1 + abs(row1['theta_mean'] - row2['theta_mean']))
+                r_sim = 1 / (1 + abs(row1['r_mean'] - row2['r_mean']))
+                
+                similarity = (omega_sim + theta_sim + r_sim) / 3
+                if similarity > 0.85:  # Increase similarity threshold
+                    G.add_edge(row1['ID'], row2['ID'], 
+                             weight=similarity,
+                             color='gray' if similarity < 0.9 else 'black')
+    
+    plt.figure(figsize=(12, 12))
+    pos = nx.spring_layout(G, k=1.5, iterations=50)  # Increase node spacing
+    
+    # Draw edges
+    edges = G.edges()
+    edge_colors = [G[u][v].get('color', 'gray') for u, v in edges]
+    edge_weights = [G[u][v]['weight'] * 2 for u, v in edges]
+    nx.draw_networkx_edges(G, pos, 
+                          edge_color=edge_colors,
+                          width=edge_weights,
+                          alpha=0.5)
+    
+    # Draw nodes
+    node_colors = [G.nodes[node]['success_rate'] for node in G.nodes()]
+    node_sizes = [G.nodes[node]['omega'] * 1000 for node in G.nodes()]  # Increase node size
+    nodes = nx.draw_networkx_nodes(G, pos,
+                                 node_color=node_colors,
+                                 node_size=node_sizes,
+                                 cmap=plt.cm.viridis,
+                                 alpha=0.8)
+    
+    # Add node labels
+    labels = {node: f"{node}\nω={G.nodes[node]['omega']:.2f}\nθ={G.nodes[node]['theta']:.2f}" 
+             for node in G.nodes()}
+    nx.draw_networkx_labels(G, pos, labels, font_size=8)
+    
+    # Add color bar
+    plt.colorbar(nodes, label='Success Rate')
+    
+    plt.title('Key Learning Influence Network\n(High Success Rate Subjects)')
+    plt.axis('off')
+    plt.savefig('./output/learning_influence_network.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+def create_model_evaluation_plot(results_df):
+    """
+    Create model evaluation visualization
+    
+    Args:
+        results_df: DataFrame containing analysis results
+    """
+    actuals = np.array(results_df['success_rate'])
+    predictions = np.array(results_df['theta_mean'])
+    
+    fpr, tpr, _ = roc_curve(actuals > actuals.mean(), predictions)
+    roc_auc = auc(fpr, tpr)
+    
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
+    
+    # ROC Curve
+    ax1.plot(fpr, tpr, color='darkorange', lw=2, 
+            label=f'ROC curve (AUC = {roc_auc:.2f})')
+    ax1.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    ax1.set_xlim([0.0, 1.0])
+    ax1.set_ylim([0.0, 1.05])
+    ax1.set_xlabel('False Positive Rate')
+    ax1.set_ylabel('True Positive Rate')
+    ax1.set_title('ROC Curve')
+    ax1.legend(loc="lower right")
+    
+    # Residual Analysis
+    residuals = predictions - actuals
+    ax2.scatter(predictions, residuals, alpha=0.5)
+    ax2.axhline(y=0, color='r', linestyle='--')
+    ax2.set_xlabel('Predicted Values')
+    ax2.set_ylabel('Residuals')
+    ax2.set_title('Residual Analysis')
+    
+    # Predicted vs Actual
+    ax3.scatter(actuals, predictions, alpha=0.5)
+    ax3.plot([actuals.min(), actuals.max()], 
+             [actuals.min(), actuals.max()], 'r--', lw=2)
+    ax3.set_xlabel('Actual Values')
+    ax3.set_ylabel('Predicted Values')
+    ax3.set_title('Predicted vs Actual Values')
+    
     plt.tight_layout()
-    plt.savefig('./output/enhanced_parameter_distribution.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/model_evaluation.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_files=False):
@@ -1032,108 +1207,13 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
     
     # 4. Learning influence network
     print("Generating learning influence network...")
-    G = nx.Graph()
-    
-    # Use stricter success rate threshold
-    success_threshold = results_df['success_rate'].mean() + 0.5 * results_df['success_rate'].std()
-    key_subjects = results_df[results_df['success_rate'] >= success_threshold]
-    
-    # Add nodes with additional information
-    for _, row in key_subjects.iterrows():
-        G.add_node(row['ID'], 
-                  omega=row['omega_mean'],
-                  success_rate=row['success_rate'],
-                  theta=row['theta_mean'],
-                  r=row['r_mean'])
-    
-    # Calculate similarity based on multiple parameters
-    for i, row1 in key_subjects.iterrows():
-        for j, row2 in key_subjects.iterrows():
-            if i < j:
-                # Calculate comprehensive similarity
-                omega_sim = 1 / (1 + abs(row1['omega_mean'] - row2['omega_mean']))
-                theta_sim = 1 / (1 + abs(row1['theta_mean'] - row2['theta_mean']))
-                r_sim = 1 / (1 + abs(row1['r_mean'] - row2['r_mean']))
-                
-                similarity = (omega_sim + theta_sim + r_sim) / 3
-                if similarity > 0.85:  # Increase similarity threshold
-                    G.add_edge(row1['ID'], row2['ID'], 
-                             weight=similarity,
-                             color='gray' if similarity < 0.9 else 'black')
-    
-    plt.figure(figsize=(12, 12))
-    pos = nx.spring_layout(G, k=1.5, iterations=50)  # Increase node spacing
-    
-    # Draw edges
-    edges = G.edges()
-    edge_colors = [G[u][v].get('color', 'gray') for u, v in edges]
-    edge_weights = [G[u][v]['weight'] * 2 for u, v in edges]
-    nx.draw_networkx_edges(G, pos, 
-                          edge_color=edge_colors,
-                          width=edge_weights,
-                          alpha=0.5)
-    
-    # Draw nodes
-    node_colors = [G.nodes[node]['success_rate'] for node in G.nodes()]
-    node_sizes = [G.nodes[node]['omega'] * 1000 for node in G.nodes()]  # Increase node size
-    nodes = nx.draw_networkx_nodes(G, pos,
-                                 node_color=node_colors,
-                                 node_size=node_sizes,
-                                 cmap=plt.cm.viridis,
-                                 alpha=0.8)
-    
-    # Add node labels
-    labels = {node: f"{node}\nω={G.nodes[node]['omega']:.2f}\nθ={G.nodes[node]['theta']:.2f}" 
-             for node in G.nodes()}
-    nx.draw_networkx_labels(G, pos, labels, font_size=8)
-    
-    # Add color bar
-    plt.colorbar(nodes, label='Success Rate')
-    
-    plt.title('Key Learning Influence Network\n(High Success Rate Subjects)')
-    plt.axis('off')
-    plt.savefig('./output/learning_influence_network.png', dpi=300, bbox_inches='tight')
-    plt.close()
+    create_learning_influence_network(results_df)
     
     # 5. Model evaluation plot
     print("Generating model evaluation plot...")
-    actuals = np.array(results_df['success_rate'])
-    predictions = np.array(results_df['theta_mean'])
+    create_model_evaluation_plot(results_df)
     
-    fpr, tpr, _ = roc_curve(actuals > actuals.mean(), predictions)
-    roc_auc = auc(fpr, tpr)
-    
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
-    
-    ax1.plot(fpr, tpr, color='darkorange', lw=2, 
-            label=f'ROC curve (AUC = {roc_auc:.2f})')
-    ax1.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-    ax1.set_xlim([0.0, 1.0])
-    ax1.set_ylim([0.0, 1.05])
-    ax1.set_xlabel('False Positive Rate')
-    ax1.set_ylabel('True Positive Rate')
-    ax1.set_title('ROC Curve')
-    ax1.legend(loc="lower right")
-    
-    residuals = predictions - actuals
-    ax2.scatter(predictions, residuals, alpha=0.5)
-    ax2.axhline(y=0, color='r', linestyle='--')
-    ax2.set_xlabel('Predicted Values')
-    ax2.set_ylabel('Residuals')
-    ax2.set_title('Residual Analysis')
-    
-    ax3.scatter(actuals, predictions, alpha=0.5)
-    ax3.plot([actuals.min(), actuals.max()], 
-             [actuals.min(), actuals.max()], 'r--', lw=2)
-    ax3.set_xlabel('Actual Values')
-    ax3.set_ylabel('Predicted Values')
-    ax3.set_title('Predicted vs Actual Values')
-    
-    plt.tight_layout()
-    plt.savefig('./output/model_evaluation.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    # Generate new strategy visualizations
+    # Generate strategy visualizations if trial data is available
     if trial_data is not None:
         print("Generating strategy heatmap...")
         create_strategy_heatmap(trial_data)
@@ -1158,7 +1238,11 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
     print("Generating enhanced parameter distribution analysis...")
     create_enhanced_parameter_distribution(results_df)
     
+    print("Generating gender parameter comparison...")
+    create_gender_parameter_comparison(results_df, trial_data)
+    
     print("All visualizations completed!")
+
 
 def analyze_individual_differences(generate_plots=True):
     """Analyze individual differences and strategy combinations"""
