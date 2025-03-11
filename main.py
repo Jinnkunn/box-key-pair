@@ -96,7 +96,7 @@ def load_and_merge_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
 def calculate_success_probability(theta: float, motor_skill: float, omega: float, r: float) -> float:
     """Calculate success probability based on learning ability, motor skill, and strategy weights"""
     
-    eps = 1e-7
+    eps = 1e-7  # Small epsilon for numerical stability
     
     theta = pm.math.clip(theta, eps, 1.0 - eps)
     motor_skill = pm.math.clip(motor_skill, eps, 1.0 - eps)
@@ -113,7 +113,6 @@ def calculate_success_probability(theta: float, motor_skill: float, omega: float
     
     return final_prob
 
-
 def fit_parameters_bayesian(subject_data: pd.DataFrame, n_samples: int = 4000) -> Dict:
     """
     Fit parameters using Bayesian MCMC sampling
@@ -125,41 +124,30 @@ def fit_parameters_bayesian(subject_data: pd.DataFrame, n_samples: int = 4000) -
     Returns:
         Dict: Dictionary containing parameter posterior distributions
     """
-    # Calculate basic statistics
     errors = subject_data['Error'].sum()
     total = len(subject_data)
     motor = 1 - (errors / total)
     
-    # Get completion status
     solved = subject_data['Solved'].iloc[0]
     num_unlock = subject_data['NumUnlock'].iloc[0]
     unlock_time = subject_data['UnlockTime'].iloc[0]
     
-    # Calculate success rate for prior adjustment
     success_rate = subject_data['Worked'].mean()
     
-    # Define number of hypotheses (Color, Number, Shape)
-    n_hypotheses = 3
+    n_hypotheses = 3  # Color, Number, Shape
     
     with pm.Model() as model:
-        # Create theta_i for each hypothesis
         theta_i = pm.Beta('theta_i', alpha=2, beta=2, shape=n_hypotheses)
-        
-        # Create hypothesis weights (probabilities)
         hypothesis_weights = pm.Dirichlet('hypothesis_weights', a=np.ones(n_hypotheses))
-        
-        # Global theta is weighted sum of theta_i
         theta = pm.Deterministic('theta', pm.math.dot(theta_i, hypothesis_weights))
-        
         r = pm.Uniform('r', lower=0, upper=1, initval=0.5)
         
-        # 修改为 Pareto 分布
+        # Using Pareto distribution for omega
         omega = pm.Pareto('omega', 
-                     alpha=3.0,  # 形状参数，控制尾部厚度
-                     m=1.0,      # 最小值参数
+                     alpha=3.0,  # Shape parameter
+                     m=1.0,      # Minimum value
                      initval=1.5)
         
-        # Calculate success probability with improved numerical stability
         p = pm.Deterministic('p', calculate_success_probability(theta, motor, omega, r))
         
         # Count successes and failures for each hypothesis
@@ -175,7 +163,6 @@ def fit_parameters_bayesian(subject_data: pd.DataFrame, n_samples: int = 4000) -
                 trials = len(subject_data[subject_data['ShapeMatch'] == 1])
             
             if trials > 0:
-                # Update theta_i based on successes and failures
                 pm.Binomial(f'obs_{i}', n=trials, p=theta_i[i], observed=successes)
         
         # Overall success probability
@@ -205,7 +192,6 @@ def fit_parameters_bayesian(subject_data: pd.DataFrame, n_samples: int = 4000) -
             chains=4,
         )
     
-    # Extract posterior samples
     posterior = trace.posterior
     
     return {
@@ -325,17 +311,13 @@ def create_strategy_heatmap(trial_data):
     """
     plt.figure(figsize=(15, 10))
     
-    # Create a copy of the data
     df = trial_data.copy()
     
-    # Check if Solved column exists, if not, try to get it from the ID
     if 'Solved' not in df.columns:
-        # Get completion status from results DataFrame
         results_df = pd.read_csv('./output/individual_results.csv')
         completion_dict = dict(zip(results_df['ID'], results_df['solved']))
         df['Solved'] = df['ID'].map(completion_dict)
     
-    # Determine primary strategy for each trial
     def get_primary_strategy(row):
         if row['ColorMatch']:
             return 'Color'
@@ -352,14 +334,11 @@ def create_strategy_heatmap(trial_data):
         lambda x: pd.qcut(x, q=4, labels=['Early', 'Early-Mid', 'Mid-Late', 'Late'])
     )
     
-    # Calculate strategy frequencies for each phase and completion status
     strategy_freq = df.groupby(['Phase', 'Solved', 'Strategy']).size().unstack(fill_value=0)
     strategy_freq = strategy_freq.groupby('Solved').transform(lambda x: x / x.sum())
     
-    # Create separate heatmaps for completed and incomplete tasks
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
     
-    # Heatmap for completed tasks
     completed_freq = strategy_freq.xs(1, level='Solved') if 1 in strategy_freq.index.get_level_values('Solved') else None
     if completed_freq is not None:
         sns.heatmap(completed_freq, ax=ax1, cmap='viridis', annot=True, fmt='.2f')
@@ -367,7 +346,6 @@ def create_strategy_heatmap(trial_data):
     else:
         ax1.text(0.5, 0.5, 'No completed tasks data available', ha='center', va='center')
     
-    # Heatmap for incomplete tasks
     incomplete_freq = strategy_freq.xs(0, level='Solved') if 0 in strategy_freq.index.get_level_values('Solved') else None
     if incomplete_freq is not None:
         sns.heatmap(incomplete_freq, ax=ax2, cmap='viridis', annot=True, fmt='.2f')
@@ -388,22 +366,18 @@ def create_strategy_sequence(df, n_subjects=6):
         df: DataFrame containing trial data
         n_subjects: Number of subjects to display (will be split between completed/incomplete)
     """
-    # Select subjects with most trials, balanced between completed and incomplete
     subject_trials = df.groupby('ID').agg({
         'Order': 'size',
         'Solved': 'first'
     }).reset_index()
     
-    # Select top n_subjects/2 from each completion status
     completed = subject_trials[subject_trials['Solved'] == 1].nlargest(n_subjects//2, 'Order')
     incomplete = subject_trials[subject_trials['Solved'] == 0].nlargest(n_subjects//2, 'Order')
     selected_subjects = pd.concat([completed, incomplete])['ID']
     
-    # Create figure with subplots for each subject
     fig, axes = plt.subplots(n_subjects, 1, figsize=(15, 3*n_subjects))
     fig.suptitle('Strategy Transition Sequences (Completed vs Incomplete)', fontsize=16, y=1.02)
     
-    # Color mapping for strategies
     colors = {
         'Color': '#1f77b4',
         'Number': '#2ca02c',
@@ -414,7 +388,6 @@ def create_strategy_sequence(df, n_subjects=6):
     for idx, subject in enumerate(selected_subjects):
         subject_data = df[df['ID'] == subject].copy()
         
-        # Determine primary strategy for each trial
         def get_primary_strategy(row):
             if row['ColorMatch']:
                 return 'Color'
@@ -426,10 +399,8 @@ def create_strategy_sequence(df, n_subjects=6):
         
         subject_data['PrimaryStrategy'] = subject_data.apply(get_primary_strategy, axis=1)
         
-        # Create strategy sequence plot
         ax = axes[idx]
         
-        # Plot strategy markers
         for strategy in colors:
             mask = subject_data['PrimaryStrategy'] == strategy
             ax.scatter(subject_data[mask]['Order'], 
@@ -454,7 +425,6 @@ def create_strategy_sequence(df, n_subjects=6):
                   alpha=0.5,
                   label='Error')
         
-        # Add completion status to title
         completion_status = "Completed" if subject_data['Solved'].iloc[0] else "Incomplete"
         num_unlocked = subject_data['NumUnlock'].iloc[0]
         ax.set_title(f'Subject {subject} ({completion_status}, {num_unlocked}/5 locks)')
@@ -462,7 +432,6 @@ def create_strategy_sequence(df, n_subjects=6):
         ax.set_yticks([])
         ax.set_ylim([0.5, 1.5])
         
-        # Add legend only for the first subplot
         if idx == 0:
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     
@@ -1625,7 +1594,6 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
         data = data[~np.isnan(data)]
         data = data.reshape(-1, 1)
         
-        # 使用2个组件，增加协方差约束
         gmm = GaussianMixture(n_components=2, 
                              random_state=42, 
                              covariance_type='full',
@@ -1655,10 +1623,9 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
         # Plot individual distributions
         for subject_id in all_posteriors:
             if param == 'omega_mean':
-                # 对于 omega 参数，使用更小的带宽和更低的透明度
                 data = all_posteriors[subject_id][param]
                 sns.kdeplot(data, alpha=0.03, color=color, label='_nolegend_', 
-                           bw_adjust=0.4)  # 减小带宽调整参数
+                           bw_adjust=0.4)
             else:
                 sns.kdeplot(all_posteriors[subject_id][param], alpha=0.05, color=color, label='_nolegend_')
         
@@ -1690,8 +1657,8 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
         
         if param == 'omega_mean':
             data = results_df[param].values
-            m = min(data)  # 最小值参数
-            alpha = len(data) / sum(np.log(data/m))  # 估计形状参数
+            m = min(data) 
+            alpha = len(data) / sum(np.log(data/m))
             
             x = np.linspace(m, max(data), 200)
             y = alpha * (m**alpha) / (x**(alpha + 1))  # Pareto PDF
@@ -1701,8 +1668,8 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
                                 label='Pareto Fit', 
                                 linewidth=2)
             
-            plt.xlim(0.9, max(data) * 1.1)  # 稍微扩展 x 轴范围
-            plt.ylim(0, max(y) * 1.2)  # 调整 y 轴范围
+            plt.xlim(0.9, max(data) * 1.1) 
+            plt.ylim(0, max(y) * 1.2)
         else:
             mixture = fit_beta_mixture(results_df[param].values)
             x = np.linspace(0.001, 0.999, 200)
