@@ -95,15 +95,26 @@ def load_and_merge_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
 
 def calculate_success_probability(theta: float, motor_skill: float, omega: float, r: float) -> float:
     """Calculate success probability based on learning ability, motor skill, and strategy weights"""
-    # Add small epsilon to avoid perfect motor skill
-    # motor_skill = pm.math.clip(motor_skill, 0.01, 0.99)
+    
+    eps = 1e-7
+    
+    theta = pm.math.clip(theta, eps, 1.0 - eps)
+    motor_skill = pm.math.clip(motor_skill, eps, 1.0 - eps)
+    r = pm.math.clip(r, eps, 1.0 - eps)
+    omega = pm.math.clip(omega, 1.0 + eps, 10.0) 
     
     base_prob = theta * motor_skill
+    base_prob = pm.math.clip(base_prob, eps, 1.0 - eps)
+    
     social_influence = omega * base_prob
-    heuristic_influence = r * (1 - base_prob)
-    return pm.math.clip(base_prob + social_influence + heuristic_influence, 0, 1)
+    heuristic_influence = r * (1.0 - base_prob)
+    
+    final_prob = pm.math.clip(base_prob + social_influence + heuristic_influence, eps, 1.0 - eps)
+    
+    return final_prob
 
-def fit_parameters_bayesian(subject_data: pd.DataFrame, n_samples: int = 2000) -> Dict:
+
+def fit_parameters_bayesian(subject_data: pd.DataFrame, n_samples: int = 4000) -> Dict:
     """
     Fit parameters using Bayesian MCMC sampling
     
@@ -120,35 +131,54 @@ def fit_parameters_bayesian(subject_data: pd.DataFrame, n_samples: int = 2000) -
     motor = 1 - (errors / total)
     
     # Get completion status
-    solved = subject_data['Solved'].iloc[0]  # Whether all tasks completed
-    num_unlock = subject_data['NumUnlock'].iloc[0]  # Number of locks opened
-    unlock_time = subject_data['UnlockTime'].iloc[0]  # Completion time
+    solved = subject_data['Solved'].iloc[0]
+    num_unlock = subject_data['NumUnlock'].iloc[0]
+    unlock_time = subject_data['UnlockTime'].iloc[0]
     
-    # Calculate completion weight (0.2-1.0)
-    completion_weight = 0.2 + (0.8 * (num_unlock / 5))
+    # Calculate success rate for prior adjustment
+    success_rate = subject_data['Worked'].mean()
     
-    # Calculate time weight (0.5-1.0)
-    time_weight = 1.0 if solved else (0.5 + 0.5 * (1 - unlock_time / 300))
+    # Define number of hypotheses (Color, Number, Shape)
+    n_hypotheses = 3
     
     with pm.Model() as model:
-        # Adjust priors based on completion status
-        if solved:
-            # Stronger priors for participants who completed all tasks
-            theta = pm.Beta('theta', alpha=2, beta=2, initval=0.5)
-            omega_raw = pm.Pareto('omega_raw', alpha=3, m=0.1, initval=0.5)
-            omega = pm.Deterministic('omega', omega_raw * 0.5)
-            r = pm.Uniform('r', lower=0, upper=1, initval=0.5)
-        else:
-            # More conservative priors for participants who didn't complete all tasks
-            theta = pm.Beta('theta', alpha=1, beta=2, initval=0.3)
-            omega_raw = pm.Pareto('omega_raw', alpha=4, m=0.05, initval=0.3)
-            omega = pm.Deterministic('omega', omega_raw * 0.3)
-            r = pm.Beta('r', alpha=2, beta=2, initval=0.5)
+        # Create theta_i for each hypothesis
+        theta_i = pm.Beta('theta_i', alpha=2, beta=2, shape=n_hypotheses)
         
-        # Success probability
+        # Create hypothesis weights (probabilities)
+        hypothesis_weights = pm.Dirichlet('hypothesis_weights', a=np.ones(n_hypotheses))
+        
+        # Global theta is weighted sum of theta_i
+        theta = pm.Deterministic('theta', pm.math.dot(theta_i, hypothesis_weights))
+        
+        r = pm.Uniform('r', lower=0, upper=1, initval=0.5)
+        
+        # 修改为 Pareto 分布
+        omega = pm.Pareto('omega', 
+                     alpha=3.0,  # 形状参数，控制尾部厚度
+                     m=1.0,      # 最小值参数
+                     initval=1.5)
+        
+        # Calculate success probability with improved numerical stability
         p = pm.Deterministic('p', calculate_success_probability(theta, motor, omega, r))
         
-        # Likelihood function with weights
+        # Count successes and failures for each hypothesis
+        for i in range(n_hypotheses):
+            if i == 0:  # Color hypothesis
+                successes = subject_data.loc[subject_data['ColorMatch'] == 1, 'Worked'].sum()
+                trials = len(subject_data[subject_data['ColorMatch'] == 1])
+            elif i == 1:  # Number hypothesis
+                successes = subject_data.loc[subject_data['NumMatch'] == 1, 'Worked'].sum()
+                trials = len(subject_data[subject_data['NumMatch'] == 1])
+            else:  # Shape hypothesis
+                successes = subject_data.loc[subject_data['ShapeMatch'] == 1, 'Worked'].sum()
+                trials = len(subject_data[subject_data['ShapeMatch'] == 1])
+            
+            if trials > 0:
+                # Update theta_i based on successes and failures
+                pm.Binomial(f'obs_{i}', n=trials, p=theta_i[i], observed=successes)
+        
+        # Overall success probability
         y = pm.Bernoulli('y', p=p, observed=subject_data['Worked'])
         
         # Debug information
@@ -157,14 +187,12 @@ def fit_parameters_bayesian(subject_data: pd.DataFrame, n_samples: int = 2000) -
         print(f"Participant ID: {subject_data['ID'].iloc[0]}")
         print(f"Completion status: {'Completed' if solved else 'Incomplete'} ({num_unlock}/5)")
         print(f"Completion time: {unlock_time:.2f} seconds")
-        print(f"Completion weight: {completion_weight:.2f}")
-        print(f"Time weight: {time_weight:.2f}")
         print(f"Basic statistics:")
         print(f"  Total attempts: {total}")
-        print(f"  Success rate: {subject_data['Worked'].mean():.4f}")
+        print(f"  Success rate: {success_rate:.4f}")
         print(f"  Error rate: {errors/total:.4f}")
         
-        # MCMC sampling
+        # Use improved sampling settings
         trace = pm.sample(
             n_samples,
             return_inferencedata=True,
@@ -173,29 +201,24 @@ def fit_parameters_bayesian(subject_data: pd.DataFrame, n_samples: int = 2000) -
             random_seed=42,
             progressbar=True,
             target_accept=0.95,
-            tune=2000,
-            chains=4
+            tune=1000,
+            chains=4,
         )
     
     # Extract posterior samples
     posterior = trace.posterior
     
-    # Apply completion status weights
-    weighted_theta = posterior['theta'].values * completion_weight * time_weight
-    weighted_omega = posterior['omega'].values * completion_weight
-    weighted_r = posterior['r'].values * completion_weight
-    
     return {
-        'theta': weighted_theta,
-        'omega': weighted_omega,
-        'r': weighted_r,
+        'theta': posterior['theta'].values,
+        'theta_i': posterior['theta_i'].values,
+        'hypothesis_weights': posterior['hypothesis_weights'].values,
+        'omega': posterior['omega'].values,
+        'r': posterior['r'].values,
         'motor': motor,
         'completion_info': {
             'solved': solved,
             'num_unlock': num_unlock,
             'unlock_time': unlock_time,
-            'completion_weight': completion_weight,
-            'time_weight': time_weight
         }
     }
 
@@ -237,8 +260,6 @@ def analyze_gender_differences():
             'solved': results['completion_info']['solved'],
             'num_unlock': results['completion_info']['num_unlock'],
             'unlock_time': results['completion_info']['unlock_time'],
-            'completion_weight': results['completion_info']['completion_weight'],
-            'time_weight': results['completion_info']['time_weight']
         }
         
         if gender == 'Boy':
@@ -355,7 +376,7 @@ def create_strategy_heatmap(trial_data):
         ax2.text(0.5, 0.5, 'No incomplete tasks data available', ha='center', va='center')
     
     plt.tight_layout()
-    plt.savefig('./output/strategy_heatmap.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/strategy_analysis/strategy_heatmap.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 def create_strategy_sequence(df, n_subjects=6):
@@ -446,7 +467,7 @@ def create_strategy_sequence(df, n_subjects=6):
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     
     plt.tight_layout()
-    plt.savefig('./output/strategy_sequence.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/strategy_analysis/strategy_sequence.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 def create_parameter_evolution(df):
@@ -502,7 +523,7 @@ def create_parameter_evolution(df):
         plt.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('./output/parameter_age_evolution.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/parameter_analysis/parameter_age_evolution.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 def create_parameter_relationships_3d(df):
@@ -592,29 +613,51 @@ def create_parameter_relationships_3d(df):
     ax4.set_title('Success Rate Surface with Completion')
     
     plt.tight_layout()
-    plt.savefig('./output/parameter_relationships_3d.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/parameter_analysis/parameter_relationships_3d.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 def create_cluster_analysis(df):
     """
-    Create visualization of parameter clusters with fixed overlap issues
+    Create visualization of parameter clusters with improved feature processing
     
     Args:
         df: DataFrame containing analysis results
     """
+    # Create cluster output directory if it doesn't exist
+    os.makedirs('./data/cluster', exist_ok=True)
+    
     from sklearn.preprocessing import StandardScaler
     from sklearn.cluster import KMeans
+    from sklearn.metrics import silhouette_score
     
-    # Prepare data for clustering
-    features = ['theta_mean', 'omega_mean', 'r_mean', 'motor', 
-                'num_unlock', 'solved', 'unlock_time']
-    X = StandardScaler().fit_transform(df[features])
+    # Prepare data for clustering with adjusted weights
+    features = ['theta_mean', 'omega_mean', 'r_mean', 'motor']  # Primary features
+    performance_features = ['num_unlock', 'unlock_time', 'success_rate']  # Performance features
     
-    # Perform clustering
-    kmeans = KMeans(n_clusters=3, random_state=42)
+    # Standardize primary features
+    X_primary = StandardScaler().fit_transform(df[features])
+    
+    # Standardize performance features and apply lower weight
+    X_performance = StandardScaler().fit_transform(df[performance_features]) * 0.5
+    
+    # Combine features
+    X = np.hstack([X_primary, X_performance])
+    
+    # Find optimal number of clusters using silhouette score
+    silhouette_scores = []
+    K = range(2, 7)
+    for k in K:
+        kmeans = KMeans(n_clusters=k, random_state=42)
+        kmeans.fit(X)
+        score = silhouette_score(X, kmeans.labels_)
+        silhouette_scores.append(score)
+    
+    # Select optimal number of clusters
+    optimal_k = K[np.argmax(silhouette_scores)]
+    
+    # Perform clustering with optimal k
+    kmeans = KMeans(n_clusters=optimal_k, random_state=42)
     df['Cluster'] = kmeans.fit_predict(X)
-    
-    # Create separate figures for each plot to avoid overlap
     
     # Figure 1: Cluster Size and Completion
     plt.figure(figsize=(10, 6))
@@ -627,7 +670,7 @@ def create_cluster_analysis(df):
     plt.legend(['Incomplete', 'Completed'], bbox_to_anchor=(1.05, 1))
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig('./output/cluster_size_completion.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/cluster/cluster_size_completion.png', dpi=300, bbox_inches='tight')
     plt.close()
     
     # Figure 2: Success Rate vs Completion Time
@@ -644,7 +687,7 @@ def create_cluster_analysis(df):
     plt.legend(*scatter.legend_elements(), title="Cluster")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig('./output/success_vs_completion.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/cluster/success_vs_completion.png', dpi=300, bbox_inches='tight')
     plt.close()
     
     # Figure 3: Number of Unlocks by Cluster
@@ -655,7 +698,7 @@ def create_cluster_analysis(df):
     plt.ylabel('Number of Unlocks', fontsize=12)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig('./output/unlocks_by_cluster.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/cluster/unlocks_by_cluster.png', dpi=300, bbox_inches='tight')
     plt.close()
     
     # Figure 4: Cluster Characteristics Heatmap
@@ -671,7 +714,7 @@ def create_cluster_analysis(df):
     plt.title('Cluster Characteristics (Z-scored)', fontsize=14, pad=20)
     plt.yticks(rotation=0)
     plt.tight_layout()
-    plt.savefig('./output/cluster_characteristics.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/cluster/cluster_characteristics.png', dpi=300, bbox_inches='tight')
     plt.close()
     
     # Figure 5: Parameter Distribution by Cluster
@@ -694,9 +737,9 @@ def create_cluster_analysis(df):
     plt.legend(title="Cluster")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig('./output/parameter_distribution.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/cluster/parameter_distribution.png', dpi=300, bbox_inches='tight')
     plt.close()
-    
+
     # Create a combined figure with proper spacing
     fig = plt.figure(figsize=(20, 15))
     gs = plt.GridSpec(3, 2, figure=fig, height_ratios=[1, 1, 1], 
@@ -756,18 +799,20 @@ def create_cluster_analysis(df):
     ax5.legend(title="Cluster")
     ax5.grid(True, alpha=0.3)
     
-    plt.savefig('./output/parameter_clusters.png', 
+    plt.savefig('./output/cluster/parameter_clusters.png', 
                 dpi=300, 
                 bbox_inches='tight',
                 facecolor='white')
     plt.close()
     
-    # Generate cluster analysis report
+    # Update cluster analysis report
     report = []
     report.append("Cluster Analysis Report")
     report.append("=" * 50)
+    report.append(f"\nOptimal number of clusters: {optimal_k}")
+    report.append(f"Silhouette score: {max(silhouette_scores):.3f}")
     
-    for cluster in range(3):
+    for cluster in range(optimal_k):
         cluster_data = df[df['Cluster'] == cluster]
         report.append(f"\nCluster {cluster}:")
         report.append("-" * 20)
@@ -775,13 +820,34 @@ def create_cluster_analysis(df):
         report.append(f"Completion rate: {cluster_data['solved'].mean():.2%}")
         report.append(f"Average unlocks: {cluster_data['num_unlock'].mean():.2f}")
         report.append(f"Average completion time: {cluster_data['unlock_time'].mean():.2f}s")
+        report.append(f"Average success rate: {cluster_data['success_rate'].mean():.2%}")
         report.append("\nParameter averages:")
         report.append(f"Learning ability (θ): {cluster_data['theta_mean'].mean():.3f}")
         report.append(f"Social influence (ω): {cluster_data['omega_mean'].mean():.3f}")
         report.append(f"Exploration rate (r): {cluster_data['r_mean'].mean():.3f}")
+        report.append(f"Motor skill: {cluster_data['motor'].mean():.3f}")
+    
+    # Save cluster data and report
+    cluster_data = df[['ID', 'Cluster', 'theta_mean', 'omega_mean', 'r_mean', 
+                      'motor', 'num_unlock', 'solved', 'unlock_time', 'success_rate']]
+    cluster_data.to_csv('./output/cluster/cluster_assignments.csv', index=False)
     
     with open('./output/cluster_analysis_report.txt', 'w') as f:
         f.write('\n'.join(report))
+    
+    # Save cluster statistics
+    cluster_stats = df.groupby('Cluster').agg({
+        'theta_mean': ['mean', 'std'],
+        'omega_mean': ['mean', 'std'],
+        'r_mean': ['mean', 'std'],
+        'motor': ['mean', 'std'],
+        'num_unlock': ['mean', 'std'],
+        'solved': ['mean', 'sum'],
+        'unlock_time': ['mean', 'std'],
+        'success_rate': ['mean', 'std']
+    }).round(3)
+    
+    cluster_stats.to_csv('./output/cluster/cluster_statistics.csv')
 
 def generate_analysis_report(results_df, all_posteriors):
     """
@@ -1093,7 +1159,7 @@ def create_enhanced_strategy_analysis(df):
     ax4.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('./output/enhanced_strategy_analysis.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/strategy_analysis/enhanced_strategy_analysis.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 def create_gender_parameter_comparison(results_df, trial_data):
@@ -1165,7 +1231,7 @@ def create_gender_parameter_comparison(results_df, trial_data):
         plt.ylabel(label)
     
     plt.tight_layout()
-    plt.savefig('./output/gender_parameter_comparison.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/gender_analysis/gender_parameter_comparison.png', dpi=300, bbox_inches='tight')
     plt.close()
     
     # Save the report
@@ -1219,7 +1285,7 @@ def create_enhanced_parameter_distribution(results_df):
         ax.grid(True, alpha=0.3, linestyle='--')
     
     plt.tight_layout()
-    plt.savefig('./output/parameter_qq_plots.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/distribution_analysis/parameter_qq_plots.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 def create_learning_influence_network(results_df):
@@ -1289,7 +1355,7 @@ def create_learning_influence_network(results_df):
     
     plt.title('Key Learning Influence Network\n(High Success Rate Subjects)')
     plt.axis('off')
-    plt.savefig('./output/learning_influence_network.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/correlation_analysis/learning_influence_network.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 def create_model_evaluation_plot(results_df):
@@ -1335,7 +1401,7 @@ def create_model_evaluation_plot(results_df):
     ax3.set_title('Predicted vs Actual Values')
     
     plt.tight_layout()
-    plt.savefig('./output/model_evaluation.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/model_evaluation/model_evaluation.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 def create_completion_analysis(results_df: pd.DataFrame):
@@ -1401,7 +1467,7 @@ def create_completion_analysis(results_df: pd.DataFrame):
     plt.ylabel('Average Parameter Value')
     
     plt.tight_layout()
-    plt.savefig('./output/completion_analysis.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/performance_analysis/completion_analysis.png', dpi=300, bbox_inches='tight')
     plt.close()
     
     # Create statistical report
@@ -1473,6 +1539,22 @@ def create_completion_analysis(results_df: pd.DataFrame):
     with open('./output/completion_analysis_report.txt', 'w', encoding='utf-8') as f:
         f.write('\n'.join(report))
 
+def create_output_directories():
+    """Create all necessary output directories"""
+    directories = [
+        './output/model_evaluation',
+        './output/parameter_analysis',
+        './output/gender_analysis',
+        './output/age_analysis',
+        './output/strategy_analysis',
+        './output/performance_analysis',
+        './output/correlation_analysis',
+        './output/distribution_analysis',
+        './output/cluster'
+    ]
+    for directory in directories:
+        os.makedirs(directory, exist_ok=True)
+
 def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_files=False):
     """
     Generate all visualizations
@@ -1482,6 +1564,9 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
         all_posteriors: Dictionary containing posterior distributions, load from file if None
         load_from_files: Whether to load data from files
     """
+    # Create output directories
+    create_output_directories()
+    
     if load_from_files:
         print("Loading data from files...")
         try:
@@ -1510,18 +1595,22 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
         print("Warning: Trial data not found. Skipping strategy visualizations.")
         trial_data = None
     
-    # Generate existing visualizations
-    # 1. Parameter distribution plot
+    # Generate parameter distribution plot
     print("Generating parameter distribution plot...")
     fig = plt.figure(figsize=(15, 5))
     gs = plt.GridSpec(1, 3, wspace=0.3)
     
     def fit_beta_mixture(data, n_components=2):
+        data = data[~np.isnan(data)]
+        data = np.clip(data, 0.001, 0.999)
         logit_data = np.log(data / (1 - data))
+        logit_data = logit_data.reshape(-1, 1)
+        
         gmm = GaussianMixture(n_components=n_components, random_state=42)
-        gmm.fit(logit_data.reshape(-1, 1))
+        gmm.fit(logit_data)
         
         def mixture_pdf(x):
+            x = np.clip(x, 0.001, 0.999)
             total = np.zeros_like(x)
             for i in range(n_components):
                 weight = gmm.weights_[i]
@@ -1529,6 +1618,29 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
                 component = weight * stats.norm.pdf(np.log(x/(1-x)), mu, sigma) / (x * (1-x))
                 total += component
             return total
+        
+        return mixture_pdf
+    
+    def fit_gaussian_mixture(data, n_components=2):
+        data = data[~np.isnan(data)]
+        data = data.reshape(-1, 1)
+        
+        # 使用2个组件，增加协方差约束
+        gmm = GaussianMixture(n_components=2, 
+                             random_state=42, 
+                             covariance_type='full',
+                             reg_covar=1e-2)
+        gmm.fit(data)
+        
+        def mixture_pdf(x):
+            total = np.zeros_like(x)
+            for i in range(gmm.n_components):
+                weight = gmm.weights_[i]
+                mu, sigma = gmm.means_[i][0], np.sqrt(gmm.covariances_[i][0][0])
+                component = weight * stats.norm.pdf(x, mu, sigma)
+                total += component
+            return total
+        
         return mixture_pdf
     
     params = {
@@ -1539,24 +1651,80 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
     
     for idx, (param, (label, color)) in enumerate(params.items()):
         ax = plt.subplot(gs[idx])
+        
+        # Plot individual distributions
         for subject_id in all_posteriors:
-            sns.kdeplot(all_posteriors[subject_id][param], alpha=0.05, color=color)
+            if param == 'omega_mean':
+                # 对于 omega 参数，使用更小的带宽和更低的透明度
+                data = all_posteriors[subject_id][param]
+                sns.kdeplot(data, alpha=0.03, color=color, label='_nolegend_', 
+                           bw_adjust=0.4)  # 减小带宽调整参数
+            else:
+                sns.kdeplot(all_posteriors[subject_id][param], alpha=0.05, color=color, label='_nolegend_')
         
-        sns.histplot(data=results_df, x=param, bins=20, alpha=0.3, 
-                    color=color, stat='density')
+        # Plot one individual distribution for legend
+        first_subject = list(all_posteriors.keys())[0]
+        if param == 'omega_mean':
+            data = all_posteriors[first_subject][param]
+            ind_dist = sns.kdeplot(data, alpha=0.5, color=color, 
+                        label='Individual Distributions', linewidth=2, 
+                        bw_adjust=0.4)
+        else:
+            ind_dist = sns.kdeplot(all_posteriors[first_subject][param], alpha=0.5, color=color, 
+                        label='Individual Distributions', linewidth=2)
         
-        mixture = fit_beta_mixture(results_df[param].values)
-        x = np.linspace(0.001, 0.999, 200)
-        y = mixture(x)
-        plt.plot(x, y, 'k--', alpha=0.7)
+        # Plot population histogram
+        if param == 'omega_mean':
+            data = results_df[param]
+            
+            # 使用更小的 bin 宽度
+            iqr = np.percentile(data, 75) - np.percentile(data, 25)
+            bin_width = iqr / (len(data) ** (1/3))  # 减小 bin 宽度
+            bins = max(int((data.max() - data.min()) / bin_width), 20)  # 增加最小 bin 数
+            
+            hist = sns.histplot(data=results_df, x=param, bins=bins, alpha=0.3, 
+                              color=color, stat='density', label='Population Distribution')
+        else:
+            hist = sns.histplot(data=results_df, x=param, bins=20, alpha=0.3, 
+                              color=color, stat='density', label='Population Distribution')
+        
+        if param == 'omega_mean':
+            data = results_df[param].values
+            m = min(data)  # 最小值参数
+            alpha = len(data) / sum(np.log(data/m))  # 估计形状参数
+            
+            x = np.linspace(m, max(data), 200)
+            y = alpha * (m**alpha) / (x**(alpha + 1))  # Pareto PDF
+            
+            mix_line, = plt.plot(x, y, 'k--', 
+                                alpha=0.7, 
+                                label='Pareto Fit', 
+                                linewidth=2)
+            
+            plt.xlim(0.9, max(data) * 1.1)  # 稍微扩展 x 轴范围
+            plt.ylim(0, max(y) * 1.2)  # 调整 y 轴范围
+        else:
+            mixture = fit_beta_mixture(results_df[param].values)
+            x = np.linspace(0.001, 0.999, 200)
+            y = mixture(x)
+            mix_line, = plt.plot(x, y, 'k--', alpha=0.7, label='Mixture Model Fit', linewidth=2)
         
         plt.title(f'Distribution of {label}')
         plt.xlabel(label)
         plt.ylabel('Density')
-        if idx == 0:
-            plt.legend(['Individual', 'Population', 'Mixture Model'])
+        
+        # Adjust y-axis limits based on the parameter
+        if param == 'theta_mean':
+            plt.ylim(0, 25)
+        elif param == 'r_mean':
+            plt.ylim(0, 40)
+        
+        plt.grid(True, alpha=0.3)
+        plt.legend()
     
-    plt.savefig('./output/parameter_distributions.png', dpi=300, bbox_inches='tight')
+    plt.tight_layout()
+    plt.savefig('./output/distribution_analysis/parameter_distributions.png', 
+                dpi=300, bbox_inches='tight')
     plt.close()
     
     # 2. Correlation heatmap
@@ -1578,7 +1746,7 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
     
     plt.title('Correlation Matrix of Key Parameters')
     plt.tight_layout()
-    plt.savefig('./output/correlation_heatmap.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/correlation_analysis/correlation_heatmap.png', dpi=300, bbox_inches='tight')
     plt.close()
     
     # 3. Violin plots
@@ -1622,7 +1790,7 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
     plt.title('Distribution of Individual Parameters')
     plt.grid(True, axis='y', linestyle='--', alpha=0.3)
     
-    plt.savefig('./output/parameter_violin_plots.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./output/distribution_analysis/parameter_violin_plots.png', dpi=300, bbox_inches='tight')
     plt.close()
     
     # 4. Learning influence network
@@ -1716,8 +1884,6 @@ def analyze_individual_differences(generate_plots=True):
             'solved': completion_info['solved'],
             'num_unlock': completion_info['num_unlock'],
             'unlock_time': completion_info['unlock_time'],
-            'completion_weight': completion_info['completion_weight'],
-            'time_weight': completion_info['time_weight']
         }
         all_results.append(result)
     
