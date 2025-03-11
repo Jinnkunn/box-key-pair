@@ -1,0 +1,10 @@
+Learning Dynamics Analysis Report
+==================================================
+
+Learning Pattern Analysis:
+------------------------------
+
+Learning Speed Comparison:
+Successful participants: -0.019 ± 0.009
+Unsuccessful participants: -0.012 ± 0.003
+T-test: t=-4.236, p=0.000

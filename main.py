@@ -11,8 +11,23 @@ import networkx as nx
 from sklearn.metrics import roc_curve, auc
 import pickle
 
+def partial_correlation(x, y, control):
+    """Calculate partial correlation between x and y controlling for control variable."""
+    # First regression: x ~ control
+    slope_x, intercept_x, _, _, _ = stats.linregress(control, x)
+    residuals_x = x - (slope_x * control + intercept_x)
+    
+    # Second regression: y ~ control
+    slope_y, intercept_y, _, _, _ = stats.linregress(control, y)
+    residuals_y = y - (slope_y * control + intercept_y)
+    
+    # Correlation between residuals
+    return stats.pearsonr(residuals_x, residuals_y)[0]
+
+output_dir = './output_smc'
+
 # Create output directory if it doesn't exist
-os.makedirs('./output', exist_ok=True)
+os.makedirs(output_dir, exist_ok=True)
 
 # Unified color scheme
 COLOR_PALETTE = {
@@ -94,32 +109,46 @@ def load_and_merge_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
     return merged_data, short_data
 
 def calculate_success_probability(theta: float, motor_skill: float, omega: float, r: float) -> float:
-    """Calculate success probability based on learning ability, motor skill, and strategy weights"""
+    """
+    Calculate success probability based on learning ability, motor skill, and strategy weights
     
+    Args:
+        theta: Learning ability parameter
+        motor_skill: Motor skill parameter
+        omega: Social influence parameter
+        r: Exploration rate parameter
+    
+    Returns:
+        float: Probability of success
+    """
     eps = 1e-7  # Small epsilon for numerical stability
     
-    theta = pm.math.clip(theta, eps, 1.0 - eps)
-    motor_skill = pm.math.clip(motor_skill, eps, 1.0 - eps)
-    r = pm.math.clip(r, eps, 1.0 - eps)
-    omega = pm.math.clip(omega, 1.0 + eps, 10.0) 
+    # Clip parameters to valid ranges
+    theta = np.clip(theta, eps, 1.0 - eps)
+    motor_skill = np.clip(motor_skill, eps, 1.0 - eps)
+    r = np.clip(r, eps, 1.0 - eps)
+    omega = np.clip(omega, 1.0 + eps, 10.0)
     
+    # Calculate base probability from learning ability and motor skill
     base_prob = theta * motor_skill
-    base_prob = pm.math.clip(base_prob, eps, 1.0 - eps)
+    base_prob = np.clip(base_prob, eps, 1.0 - eps)
     
+    # Add social influence and exploration effects
     social_influence = omega * base_prob
     heuristic_influence = r * (1.0 - base_prob)
     
-    final_prob = pm.math.clip(base_prob + social_influence + heuristic_influence, eps, 1.0 - eps)
+    # Calculate final probability
+    final_prob = np.clip(base_prob + social_influence + heuristic_influence, eps, 1.0 - eps)
     
     return final_prob
 
-def fit_parameters_bayesian(subject_data: pd.DataFrame, n_samples: int = 4000) -> Dict:
+def fit_parameters_sequential(subject_data: pd.DataFrame, n_particles: int = 1000) -> Dict:
     """
-    Fit parameters using Bayesian MCMC sampling
+    Fit parameters using Sequential Monte Carlo (Particle Filter)
     
     Args:
         subject_data: DataFrame containing participant data
-        n_samples: Number of MCMC samples
+        n_particles: Number of particles
     
     Returns:
         Dict: Dictionary containing parameter posterior distributions
@@ -136,76 +165,65 @@ def fit_parameters_bayesian(subject_data: pd.DataFrame, n_samples: int = 4000) -
     
     n_hypotheses = 3  # Color, Number, Shape
     
-    with pm.Model() as model:
-        theta_i = pm.Beta('theta_i', alpha=2, beta=2, shape=n_hypotheses)
-        hypothesis_weights = pm.Dirichlet('hypothesis_weights', a=np.ones(n_hypotheses))
-        theta = pm.Deterministic('theta', pm.math.dot(theta_i, hypothesis_weights))
-        r = pm.Uniform('r', lower=0, upper=1, initval=0.5)
-        
-        # Using Pareto distribution for omega
-        omega = pm.Pareto('omega', 
-                     alpha=3.0,  # Shape parameter
-                     m=1.0,      # Minimum value
-                     initval=1.5)
-        
-        p = pm.Deterministic('p', calculate_success_probability(theta, motor, omega, r))
-        
-        # Count successes and failures for each hypothesis
-        for i in range(n_hypotheses):
-            if i == 0:  # Color hypothesis
-                successes = subject_data.loc[subject_data['ColorMatch'] == 1, 'Worked'].sum()
-                trials = len(subject_data[subject_data['ColorMatch'] == 1])
-            elif i == 1:  # Number hypothesis
-                successes = subject_data.loc[subject_data['NumMatch'] == 1, 'Worked'].sum()
-                trials = len(subject_data[subject_data['NumMatch'] == 1])
-            else:  # Shape hypothesis
-                successes = subject_data.loc[subject_data['ShapeMatch'] == 1, 'Worked'].sum()
-                trials = len(subject_data[subject_data['ShapeMatch'] == 1])
-            
-            if trials > 0:
-                pm.Binomial(f'obs_{i}', n=trials, p=theta_i[i], observed=successes)
-        
-        # Overall success probability
-        y = pm.Bernoulli('y', p=p, observed=subject_data['Worked'])
-        
-        # Debug information
-        print("\nModel Debug Information:")
-        print("-" * 50)
-        print(f"Participant ID: {subject_data['ID'].iloc[0]}")
-        print(f"Completion status: {'Completed' if solved else 'Incomplete'} ({num_unlock}/5)")
-        print(f"Completion time: {unlock_time:.2f} seconds")
-        print(f"Basic statistics:")
-        print(f"  Total attempts: {total}")
-        print(f"  Success rate: {success_rate:.4f}")
-        print(f"  Error rate: {errors/total:.4f}")
-        
-        # Use improved sampling settings
-        trace = pm.sample(
-            n_samples,
-            return_inferencedata=True,
-            cores=4,
-            init='jitter+adapt_diag',
-            random_seed=42,
-            progressbar=True,
-            target_accept=0.95,
-            tune=1000,
-            chains=4,
-        )
+    # Initialize particles
+    particles = {
+        'theta': np.random.beta(2, 2, n_particles),
+        'omega': np.random.pareto(3.0, n_particles) + 1.0,
+        'r': np.random.uniform(0, 1, n_particles)
+    }
     
-    posterior = trace.posterior
+    # Initialize weights
+    weights = np.ones(n_particles) / n_particles
+    
+    # Initialize parameter trajectories
+    parameter_trajectories = {k: [] for k in particles.keys()}
+    
+    # Sequential processing
+    for _, row in subject_data.iterrows():
+        # Update particles
+        for i in range(n_particles):
+            theta = particles['theta'][i]
+            omega = particles['omega'][i]
+            r = particles['r'][i]
+            
+            # Calculate success probability
+            p = calculate_success_probability(theta, motor, omega, r)
+            
+            # Update weights
+            if row['Worked']:
+                weights[i] *= p
+            else:
+                weights[i] *= (1 - p)
+        
+        # Normalize weights
+        weights /= np.sum(weights)
+        
+        # Resample particles
+        indices = np.random.choice(n_particles, size=n_particles, p=weights)
+        particles = {k: v[indices] for k, v in particles.items()}
+        
+        # Store parameter trajectories
+        for k, v in particles.items():
+            parameter_trajectories[k].append(np.mean(v))
+    
+    # Calculate final parameter estimates
+    final_parameters = {k: np.mean(v) for k, v in particles.items()}
+    
+    # Calculate parameter uncertainties
+    parameter_uncertainties = {k: np.std(v) for k, v in particles.items()}
     
     return {
-        'theta': posterior['theta'].values,
-        'theta_i': posterior['theta_i'].values,
-        'hypothesis_weights': posterior['hypothesis_weights'].values,
-        'omega': posterior['omega'].values,
-        'r': posterior['r'].values,
+        'theta': final_parameters['theta'],
+        'omega': final_parameters['omega'],
+        'r': final_parameters['r'],
         'motor': motor,
         'completion_info': {
             'solved': solved,
             'num_unlock': num_unlock,
             'unlock_time': unlock_time,
-        }
+        },
+        'parameter_trajectories': parameter_trajectories,
+        'parameter_uncertainties': parameter_uncertainties
     }
 
 def analyze_gender_differences():
@@ -225,8 +243,8 @@ def analyze_gender_differences():
         print(f"\nProcessing subject {subject_id} ({gender})")
         print("-" * 50)
         
-        # Fit parameters using Bayesian MCMC
-        results = fit_parameters_bayesian(subject_data)
+        # Fit parameters using Sequential MCMC
+        results = fit_parameters_sequential(subject_data)
         
         # Store results
         result = {
@@ -285,7 +303,7 @@ def analyze_gender_differences():
     plt.ylabel('Motor Skill (M)')
     
     plt.tight_layout()
-    plt.savefig('./output/bayesian_comparison_results.png')
+    plt.savefig(os.path.join(output_dir, 'bayesian_comparison_results.png'))
     plt.close()
     
     # Calculate statistical significance using Bayesian approach
@@ -314,7 +332,7 @@ def create_strategy_heatmap(trial_data):
     df = trial_data.copy()
     
     if 'Solved' not in df.columns:
-        results_df = pd.read_csv('./output/individual_results.csv')
+        results_df = pd.read_csv(os.path.join(output_dir, 'individual_results.csv'))
         completion_dict = dict(zip(results_df['ID'], results_df['solved']))
         df['Solved'] = df['ID'].map(completion_dict)
     
@@ -354,7 +372,7 @@ def create_strategy_heatmap(trial_data):
         ax2.text(0.5, 0.5, 'No incomplete tasks data available', ha='center', va='center')
     
     plt.tight_layout()
-    plt.savefig('./output/strategy_analysis/strategy_heatmap.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'strategy_analysis/strategy_heatmap.png'), dpi=300, bbox_inches='tight')    
     plt.close()
 
 def create_strategy_sequence(df, n_subjects=6):
@@ -436,7 +454,64 @@ def create_strategy_sequence(df, n_subjects=6):
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     
     plt.tight_layout()
-    plt.savefig('./output/strategy_analysis/strategy_sequence.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'strategy_analysis/strategy_sequence.png'), dpi=300, bbox_inches='tight')   
+    plt.close()
+
+def create_parameter_trajectory_plot(subject_id, parameter_trajectories, parameter_uncertainties, subject_data):
+    """
+    Create a visualization of parameter trajectories for a given subject
+    
+    Args:
+        subject_id: ID of the subject
+        parameter_trajectories: Dictionary containing parameter trajectories
+        parameter_uncertainties: Dictionary containing parameter uncertainties
+        subject_data: DataFrame containing subject data
+    """
+    plt.figure(figsize=(15, 10))
+    
+    # Plot parameter trajectories
+    for idx, (param, trajectory) in enumerate(parameter_trajectories.items()):
+        plt.subplot(2, 2, idx + 1)
+        
+        # Plot parameter values
+        plt.scatter(range(len(trajectory)), trajectory, 
+                   alpha=0.6, 
+                   color=PARAM_COLORS[param],
+                   s=100)
+        
+        # Add uncertainty intervals
+        uncertainty = parameter_uncertainties[param]
+        plt.fill_between(range(len(trajectory)), 
+                         [t - uncertainty for t in trajectory],
+                         [t + uncertainty for t in trajectory],
+                         color=PARAM_COLORS[param],
+                         alpha=0.2)
+        
+        # Add success/failure markers
+        plt.scatter(subject_data[subject_data['Worked'] == 1]['Order'],
+                    [0.9] * subject_data['Worked'].sum(),
+                    marker='^',
+                    c='green',
+                    alpha=0.5,
+                    label='Success')
+        
+        plt.scatter(subject_data[subject_data['Error'] == 1]['Order'],
+                    [0.1] * subject_data['Error'].sum(),
+                    marker='v',
+                    c='red',
+                    alpha=0.5,
+                    label='Error')
+        
+        plt.title(f'{param.capitalize()} Trajectory')
+        plt.xlabel('Trial Number')
+        plt.ylabel(param.capitalize())
+        plt.grid(True, alpha=0.3)
+        
+        if idx == 0:
+            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'parameter_analysis/trajectories_{subject_id}.png'), dpi=300, bbox_inches='tight')    
     plt.close()
 
 def create_parameter_evolution(df):
@@ -492,7 +567,7 @@ def create_parameter_evolution(df):
         plt.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('./output/parameter_analysis/parameter_age_evolution.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'parameter_analysis/parameter_age_evolution.png'), dpi=300, bbox_inches='tight')    
     plt.close()
 
 def create_parameter_relationships_3d(df):
@@ -582,7 +657,7 @@ def create_parameter_relationships_3d(df):
     ax4.set_title('Success Rate Surface with Completion')
     
     plt.tight_layout()
-    plt.savefig('./output/parameter_analysis/parameter_relationships_3d.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'parameter_analysis/parameter_relationships_3d.png'), dpi=300, bbox_inches='tight') 
     plt.close()
 
 def create_cluster_analysis(df):
@@ -639,7 +714,7 @@ def create_cluster_analysis(df):
     plt.legend(['Incomplete', 'Completed'], bbox_to_anchor=(1.05, 1))
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig('./output/cluster/cluster_size_completion.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'cluster/cluster_size_completion.png'), dpi=300, bbox_inches='tight')   
     plt.close()
     
     # Figure 2: Success Rate vs Completion Time
@@ -656,7 +731,7 @@ def create_cluster_analysis(df):
     plt.legend(*scatter.legend_elements(), title="Cluster")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig('./output/cluster/success_vs_completion.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'cluster/success_vs_completion.png'), dpi=300, bbox_inches='tight') 
     plt.close()
     
     # Figure 3: Number of Unlocks by Cluster
@@ -667,7 +742,7 @@ def create_cluster_analysis(df):
     plt.ylabel('Number of Unlocks', fontsize=12)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig('./output/cluster/unlocks_by_cluster.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'cluster/unlocks_by_cluster.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
     # Figure 4: Cluster Characteristics Heatmap
@@ -683,7 +758,7 @@ def create_cluster_analysis(df):
     plt.title('Cluster Characteristics (Z-scored)', fontsize=14, pad=20)
     plt.yticks(rotation=0)
     plt.tight_layout()
-    plt.savefig('./output/cluster/cluster_characteristics.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'cluster/cluster_characteristics.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
     # Figure 5: Parameter Distribution by Cluster
@@ -706,7 +781,7 @@ def create_cluster_analysis(df):
     plt.legend(title="Cluster")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig('./output/cluster/parameter_distribution.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'cluster/parameter_distribution.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
     # Create a combined figure with proper spacing
@@ -768,7 +843,7 @@ def create_cluster_analysis(df):
     ax5.legend(title="Cluster")
     ax5.grid(True, alpha=0.3)
     
-    plt.savefig('./output/cluster/parameter_clusters.png', 
+    plt.savefig(os.path.join(output_dir, 'cluster/parameter_clusters.png'), 
                 dpi=300, 
                 bbox_inches='tight',
                 facecolor='white')
@@ -799,9 +874,9 @@ def create_cluster_analysis(df):
     # Save cluster data and report
     cluster_data = df[['ID', 'Cluster', 'theta_mean', 'omega_mean', 'r_mean', 
                       'motor', 'num_unlock', 'solved', 'unlock_time', 'success_rate']]
-    cluster_data.to_csv('./output/cluster/cluster_assignments.csv', index=False)
+    cluster_data.to_csv(os.path.join(output_dir, 'data/cluster_assignments.csv'), index=False)
     
-    with open('./output/cluster_analysis_report.txt', 'w') as f:
+    with open(os.path.join(output_dir, 'reports/cluster_analysis_report.txt'), 'w') as f:
         f.write('\n'.join(report))
     
     # Save cluster statistics
@@ -816,7 +891,7 @@ def create_cluster_analysis(df):
         'success_rate': ['mean', 'std']
     }).round(3)
     
-    cluster_stats.to_csv('./output/cluster/cluster_statistics.csv')
+    cluster_stats.to_csv(os.path.join(output_dir, 'data/cluster_statistics.csv'))
 
 def generate_analysis_report(results_df, all_posteriors):
     """
@@ -895,34 +970,53 @@ def generate_analysis_report(results_df, all_posteriors):
         report.append(f"Effect size (vs. neutral): d={d:.3f}")
         report.append(f"Effect magnitude: {get_effect_size_interpretation(d)}")
     
-    # 3. Correlation Analysis with Statistical Tests
+    # 3. Enhanced Correlation Analysis with Statistical Tests
     report.append("\nCorrelation Analysis")
     report.append("=" * 50)
     
-    # Create correlation matrix
-    correlations = results_df[list(params.keys()) + ['success_rate']].corr()
+    # Define parameter pairs for correlation analysis
+    param_pairs = [
+        ('theta_mean', 'omega_mean'),
+        ('theta_mean', 'r_mean'),
+        ('theta_mean', 'motor'),
+        ('omega_mean', 'r_mean'),
+        ('omega_mean', 'motor'),
+        ('r_mean', 'motor'),
+        ('theta_mean', 'success_rate'),
+        ('omega_mean', 'success_rate'),
+        ('r_mean', 'success_rate'),
+        ('motor', 'success_rate')
+    ]
     
-    for param1 in params:
-        for param2 in params:
-            if param1 < param2:  # Only report upper triangle matrix
-                corr = correlations.loc[param1, param2]
-                # Perform correlation test
-                r, p = stats.pearsonr(results_df[param1], results_df[param2])
-                
-                if abs(corr) > 0.3:  # Only report significant correlations
-                    report.append(f"\n{params[param1]} and {params[param2]}:")
-                    report.append(f"Correlation coefficient: r={r:.3f}")
-                    report.append(f"Statistical significance: p={p:.3f}")
-                    report.append(f"Effect size interpretation: {get_correlation_interpretation(r)}")
-                    
-                    # Add regression analysis if correlation is significant
-                    if p < 0.05:
-                        slope, intercept, r_value, p_value, std_err = stats.linregress(
-                            results_df[param1], results_df[param2]
-                        )
-                        report.append(f"Regression analysis:")
-                        report.append(f"  Slope: {slope:.3f} ± {std_err:.3f}")
-                        report.append(f"  R-squared: {r_value**2:.3f}")
+    for param1, param2 in param_pairs:
+        # Calculate correlation
+        r, p = stats.pearsonr(results_df[param1], results_df[param2])
+        
+        # Only report significant or strong correlations
+        if abs(r) > 0.3 or p < 0.05:
+            report.append(f"\n{params.get(param1, param1)} and {params.get(param2, param2)}:")
+            report.append(f"Correlation coefficient: r={r:.3f}")
+            report.append(f"Statistical significance: p={p:.3f}")
+            report.append(f"Effect size interpretation: {get_correlation_interpretation(r)}")
+            
+            # Add regression analysis
+            slope, intercept, r_value, p_value, std_err = stats.linregress(
+                results_df[param1], results_df[param2]
+            )
+            report.append(f"Regression analysis:")
+            report.append(f"  Slope: {slope:.3f} ± {std_err:.3f}")
+            report.append(f"  R-squared: {r_value**2:.3f}")
+            
+            # Add partial correlations controlling for other variables
+            other_params = [p for p in params.keys() if p not in [param1, param2]]
+            if other_params:
+                for control_param in other_params:
+                    partial_r = partial_correlation(
+                        results_df[param1],
+                        results_df[param2],
+                        results_df[control_param]
+                    )
+                    report.append(f"Partial correlation (controlling for {params[control_param]}): r={partial_r:.3f}")
     
     # 4. Strategy Analysis with Comparative Statistics
     report.append("\nStrategy Usage Analysis")
@@ -947,11 +1041,13 @@ def generate_analysis_report(results_df, all_posteriors):
         strategy_stats = stats.describe(results_df[strategy])
         report.append(f"Usage rate: {strategy_stats.mean:.3f} ± {np.sqrt(strategy_stats.variance):.3f}")
         
-        # Correlation with success rate
-        corr, p = stats.pearsonr(results_df[strategy], results_df['success_rate'])
-        report.append(f"Correlation with success rate: r={corr:.3f}, p={p:.3f}")
-        if p < 0.05:
-            report.append(f"Effect size interpretation: {get_correlation_interpretation(corr)}")
+        # Correlation with success rate and parameters
+        for param, param_name in params.items():
+            corr, p = stats.pearsonr(results_df[strategy], results_df[param])
+            if abs(corr) > 0.3 or p < 0.05:
+                report.append(f"Correlation with {param_name}: r={corr:.3f}, p={p:.3f}")
+                if p < 0.05:
+                    report.append(f"Effect size interpretation: {get_correlation_interpretation(corr)}")
     
     # 5. High Performers Analysis with Group Comparisons
     report.append("\nHigh Performers Analysis")
@@ -977,10 +1073,10 @@ def generate_analysis_report(results_df, all_posteriors):
         report.append(f"Effect magnitude: {get_effect_size_interpretation(cohens_d)}")
     
     # Save report
-    with open('./output/analysis_report.txt', 'w', encoding='utf-8') as f:
+    with open(os.path.join(output_dir, 'reports/analysis_report.txt'), 'w', encoding='utf-8') as f:
         f.write('\n'.join(report))
     
-    print("Analysis report has been saved to './output/analysis_report.txt'")
+    print(f"Analysis report has been saved to '{os.path.join(output_dir, 'reports/analysis_report.txt')}'")
     return report
 
 def get_effect_size_interpretation(d):
@@ -1128,7 +1224,7 @@ def create_enhanced_strategy_analysis(df):
     ax4.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('./output/strategy_analysis/enhanced_strategy_analysis.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'strategy_analysis/enhanced_strategy_analysis.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
 def create_gender_parameter_comparison(results_df, trial_data):
@@ -1200,11 +1296,11 @@ def create_gender_parameter_comparison(results_df, trial_data):
         plt.ylabel(label)
     
     plt.tight_layout()
-    plt.savefig('./output/gender_analysis/gender_parameter_comparison.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'gender_analysis/gender_parameter_comparison.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
     # Save the report
-    with open('./output/gender_parameter_comparison_report.txt', 'w', encoding='utf-8') as f:
+    with open(os.path.join(output_dir, 'reports/gender_parameter_comparison_report.txt'), 'w', encoding='utf-8') as f:
         f.write('\n'.join(report))
 
 def create_enhanced_parameter_distribution(results_df):
@@ -1254,7 +1350,7 @@ def create_enhanced_parameter_distribution(results_df):
         ax.grid(True, alpha=0.3, linestyle='--')
     
     plt.tight_layout()
-    plt.savefig('./output/distribution_analysis/parameter_qq_plots.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'distribution_analysis/parameter_qq_plots.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
 def create_learning_influence_network(results_df):
@@ -1324,7 +1420,7 @@ def create_learning_influence_network(results_df):
     
     plt.title('Key Learning Influence Network\n(High Success Rate Subjects)')
     plt.axis('off')
-    plt.savefig('./output/correlation_analysis/learning_influence_network.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'correlation_analysis/learning_influence_network.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
 def create_model_evaluation_plot(results_df):
@@ -1370,7 +1466,7 @@ def create_model_evaluation_plot(results_df):
     ax3.set_title('Predicted vs Actual Values')
     
     plt.tight_layout()
-    plt.savefig('./output/model_evaluation/model_evaluation.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'model_evaluation/model_evaluation.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
 def create_completion_analysis(results_df: pd.DataFrame):
@@ -1436,7 +1532,7 @@ def create_completion_analysis(results_df: pd.DataFrame):
     plt.ylabel('Average Parameter Value')
     
     plt.tight_layout()
-    plt.savefig('./output/performance_analysis/completion_analysis.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'performance_analysis/completion_analysis.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
     # Create statistical report
@@ -1505,111 +1601,56 @@ def create_completion_analysis(results_df: pd.DataFrame):
     report.append("Slowest time: {:.2f} seconds".format(time_stats.loc[1, 'max']))
     
     # Save report
-    with open('./output/completion_analysis_report.txt', 'w', encoding='utf-8') as f:
+    with open(os.path.join(output_dir, 'reports/completion_analysis_report.txt'), 'w', encoding='utf-8') as f:
         f.write('\n'.join(report))
 
 def create_output_directories():
-    """Create all necessary output directories"""
-    directories = [
-        './output/model_evaluation',
-        './output/parameter_analysis',
-        './output/gender_analysis',
-        './output/age_analysis',
-        './output/strategy_analysis',
-        './output/performance_analysis',
-        './output/correlation_analysis',
-        './output/distribution_analysis',
-        './output/cluster'
+    """Create all necessary output directories."""
+    subdirs = [
+        'distribution_analysis', 
+        'correlation_analysis', 
+        'parameter_analysis',
+        'strategy_analysis',
+        'learning_dynamics', 
+        'cluster', 
+        'model_evaluation',
+        'performance_analysis',
+        'reports', 
+        'data'
     ]
-    for directory in directories:
-        os.makedirs(directory, exist_ok=True)
+    
+    for subdir in subdirs:
+        os.makedirs(os.path.join(output_dir, subdir), exist_ok=True)
 
-def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_files=False):
-    """
-    Generate all visualizations
+def generate_all_visualizations(results_df=None, all_posteriors=None):
+    """Generate all visualizations for the analysis.
     
     Args:
-        results_df: DataFrame containing analysis results, load from file if None
-        all_posteriors: Dictionary containing posterior distributions, load from file if None
-        load_from_files: Whether to load data from files
+        results_df: DataFrame containing analysis results. If None, will load from file.
+        all_posteriors: Dictionary containing posterior distributions. If None, will load from file.
     """
-    # Create output directories
     create_output_directories()
     
-    if load_from_files:
-        print("Loading data from files...")
+    # Load data from files if not provided
+    if results_df is None:
         try:
-            results_df = pd.read_csv('./output/individual_results.csv')
-            with open('./output/posterior_distributions.pkl', 'rb') as f:
+            results_df = pd.read_csv(os.path.join(output_dir, 'data/individual_results.csv'))
+        except FileNotFoundError:
+            raise FileNotFoundError("Results file not found. Please run the analysis first.")
+    
+    if all_posteriors is None:
+        try:
+            with open(os.path.join(output_dir, 'data/posterior_distributions.pkl'), 'rb') as f:
                 all_posteriors = pickle.load(f)
         except FileNotFoundError:
-            print("Error: Required data files not found. Please run full analysis first.")
-            return
+            raise FileNotFoundError("Posterior distributions file not found. Please run the analysis first.")
     
-    if results_df is None or all_posteriors is None:
-        print("Error: Data must be provided or loaded from files.")
-        return
-
-    print("Starting visualization generation...")
-    
-    # Generate analysis report
     print("Generating analysis report...")
     generate_analysis_report(results_df, all_posteriors)
     
-    # Load trial data for new visualizations
-    try:
-        merged_data, _ = load_and_merge_data()
-        trial_data = merged_data
-    except FileNotFoundError:
-        print("Warning: Trial data not found. Skipping strategy visualizations.")
-        trial_data = None
-    
-    # Generate parameter distribution plot
     print("Generating parameter distribution plot...")
     fig = plt.figure(figsize=(15, 5))
     gs = plt.GridSpec(1, 3, wspace=0.3)
-    
-    def fit_beta_mixture(data, n_components=2):
-        data = data[~np.isnan(data)]
-        data = np.clip(data, 0.001, 0.999)
-        logit_data = np.log(data / (1 - data))
-        logit_data = logit_data.reshape(-1, 1)
-        
-        gmm = GaussianMixture(n_components=n_components, random_state=42)
-        gmm.fit(logit_data)
-        
-        def mixture_pdf(x):
-            x = np.clip(x, 0.001, 0.999)
-            total = np.zeros_like(x)
-            for i in range(n_components):
-                weight = gmm.weights_[i]
-                mu, sigma = gmm.means_[i][0], np.sqrt(gmm.covariances_[i][0][0])
-                component = weight * stats.norm.pdf(np.log(x/(1-x)), mu, sigma) / (x * (1-x))
-                total += component
-            return total
-        
-        return mixture_pdf
-    
-    def fit_gaussian_mixture(data, n_components=2):
-        data = data[~np.isnan(data)]
-        data = data.reshape(-1, 1)
-        
-        gmm = GaussianMixture(n_components=2, 
-                             random_state=42, 
-                             covariance_type='full',
-                             reg_covar=1e-2)
-        gmm.fit(data)
-        
-        def mixture_pdf(x):
-            total = np.zeros_like(x)
-            for i in range(gmm.n_components):
-                weight = gmm.weights_[i]
-                mu, sigma = gmm.means_[i][0], np.sqrt(gmm.covariances_[i][0][0])
-                component = weight * stats.norm.pdf(x, mu, sigma)
-                total += component
-            return total
-        
-        return mixture_pdf
     
     params = {
         'theta_mean': ('Learning Ability (θ)', 'blue'),
@@ -1621,81 +1662,27 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
         ax = plt.subplot(gs[idx])
         
         # Plot individual distributions
-        for subject_id in all_posteriors:
-            if param == 'omega_mean':
-                data = all_posteriors[subject_id][param]
-                sns.kdeplot(data, alpha=0.03, color=color, label='_nolegend_', 
-                           bw_adjust=0.4)
-            else:
-                sns.kdeplot(all_posteriors[subject_id][param], alpha=0.05, color=color, label='_nolegend_')
+        sns.kdeplot(data=results_df, x=param, alpha=0.5, color=color, 
+                   label='Population Distribution')
         
-        # Plot one individual distribution for legend
-        first_subject = list(all_posteriors.keys())[0]
-        if param == 'omega_mean':
-            data = all_posteriors[first_subject][param]
-            ind_dist = sns.kdeplot(data, alpha=0.5, color=color, 
-                        label='Individual Distributions', linewidth=2, 
-                        bw_adjust=0.4)
-        else:
-            ind_dist = sns.kdeplot(all_posteriors[first_subject][param], alpha=0.5, color=color, 
-                        label='Individual Distributions', linewidth=2)
-        
-        # Plot population histogram
-        if param == 'omega_mean':
-            data = results_df[param]
-            
-            # 使用更小的 bin 宽度
-            iqr = np.percentile(data, 75) - np.percentile(data, 25)
-            bin_width = iqr / (len(data) ** (1/3))  # 减小 bin 宽度
-            bins = max(int((data.max() - data.min()) / bin_width), 20)  # 增加最小 bin 数
-            
-            hist = sns.histplot(data=results_df, x=param, bins=bins, alpha=0.3, 
-                              color=color, stat='density', label='Population Distribution')
-        else:
-            hist = sns.histplot(data=results_df, x=param, bins=20, alpha=0.3, 
-                              color=color, stat='density', label='Population Distribution')
-        
-        if param == 'omega_mean':
-            data = results_df[param].values
-            m = min(data) 
-            alpha = len(data) / sum(np.log(data/m))
-            
-            x = np.linspace(m, max(data), 200)
-            y = alpha * (m**alpha) / (x**(alpha + 1))  # Pareto PDF
-            
-            mix_line, = plt.plot(x, y, 'k--', 
-                                alpha=0.7, 
-                                label='Pareto Fit', 
-                                linewidth=2)
-            
-            plt.xlim(0.9, max(data) * 1.1) 
-            plt.ylim(0, max(y) * 1.2)
-        else:
-            mixture = fit_beta_mixture(results_df[param].values)
-            x = np.linspace(0.001, 0.999, 200)
-            y = mixture(x)
-            mix_line, = plt.plot(x, y, 'k--', alpha=0.7, label='Mixture Model Fit', linewidth=2)
+        # Plot mean and std
+        plt.axvline(results_df[param].mean(), color='black', linestyle='--', alpha=0.5)
+        plt.axvspan(results_df[param].mean() - results_df[param].std(),
+                   results_df[param].mean() + results_df[param].std(),
+                   color=color, alpha=0.1)
         
         plt.title(f'Distribution of {label}')
         plt.xlabel(label)
         plt.ylabel('Density')
-        
-        # Adjust y-axis limits based on the parameter
-        if param == 'theta_mean':
-            plt.ylim(0, 25)
-        elif param == 'r_mean':
-            plt.ylim(0, 40)
-        
         plt.grid(True, alpha=0.3)
         plt.legend()
     
-    plt.tight_layout()
-    plt.savefig('./output/distribution_analysis/parameter_distributions.png', 
+    plt.savefig(os.path.join(output_dir, 'distribution_analysis/parameter_distributions.png'), 
                 dpi=300, bbox_inches='tight')
     plt.close()
     
-    # 2. Correlation heatmap
     print("Generating correlation heatmap...")
+    # Create correlation heatmap
     key_vars = ['theta_mean', 'omega_mean', 'r_mean', 'motor', 'success_rate']
     correlation_matrix = results_df[key_vars].corr()
     
@@ -1713,94 +1700,43 @@ def generate_all_visualizations(results_df=None, all_posteriors=None, load_from_
     
     plt.title('Correlation Matrix of Key Parameters')
     plt.tight_layout()
-    plt.savefig('./output/correlation_analysis/correlation_heatmap.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, 'correlation_analysis/correlation_heatmap.png'), 
+                dpi=300, bbox_inches='tight')
     plt.close()
     
-    # 3. Violin plots
-    print("Generating violin plots...")
-    plt.figure(figsize=(12, 6))
-    
-    param_names = ['theta_mean', 'omega_mean', 'r_mean', 'motor']
-    param_labels = ['Learning\nAbility (θ)', 'Social\nInfluence (ω)', 
-                   'Exploration (r)', 'Motor\nSkill (M)']
-    violin_data = [results_df[param].values for param in param_names]
-    
-    violin = plt.violinplot(violin_data, points=100, vert=True, widths=0.7,
-                          showmeans=True, showextrema=True, showmedians=True)
-    
-    colors = ['#1976D2', '#43A047', '#E53935', '#FDD835']
-    for i, pc in enumerate(violin['bodies']):
-        pc.set_facecolor(colors[i])
-        pc.set_alpha(0.7)
-    
-    violin['cmeans'].set_color('black')
-    violin['cmedians'].set_color('white')
-    
-    for idx, param in enumerate(param_names):
-        z_scores = np.abs(stats.zscore(results_df[param]))
-        outliers = z_scores > 2.5
-        
-        x_jitter = np.random.normal(idx + 1, 0.02, size=len(results_df))
-        plt.scatter(x_jitter, results_df[param], alpha=0.2, color='black', s=15)
-        
-        for i, (is_outlier, x, y) in enumerate(zip(outliers, x_jitter, results_df[param])):
-            if is_outlier and z_scores[i] > 3:
-                plt.annotate(results_df['ID'].iloc[i], 
-                           (x, y),
-                           xytext=(5, 5),
-                           textcoords='offset points',
-                           fontsize=8,
-                           alpha=0.7)
-    
-    plt.xticks(range(1, len(param_names) + 1), param_labels)
-    plt.ylabel('Parameter Value')
-    plt.title('Distribution of Individual Parameters')
-    plt.grid(True, axis='y', linestyle='--', alpha=0.3)
-    
-    plt.savefig('./output/distribution_analysis/parameter_violin_plots.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    # 4. Learning influence network
-    print("Generating learning influence network...")
-    create_learning_influence_network(results_df)
-    
-    # 5. Model evaluation plot
-    print("Generating model evaluation plot...")
-    create_model_evaluation_plot(results_df)
-    
-    # Generate strategy visualizations if trial data is available
-    if trial_data is not None:
-        print("Generating strategy heatmap...")
-        create_strategy_heatmap(trial_data)
-        
-        print("Generating strategy sequence plot...")
-        create_strategy_sequence(trial_data)
-    
-    # Add new visualizations
-    print("Generating parameter evolution plot...")
-    create_parameter_evolution(results_df)
-    
-    print("Generating 3D parameter relationships...")
+    print("Generating parameter relationships plot...")
+    # Create 3D parameter relationships plot
     create_parameter_relationships_3d(results_df)
     
     print("Generating cluster analysis...")
+    # Create cluster analysis
     create_cluster_analysis(results_df)
     
-    # Add new statistical visualizations
-    print("Generating enhanced strategy analysis...")
-    create_enhanced_strategy_analysis(trial_data)
+    print("Generating strategy analysis...")
+    # Load trial data for strategy analysis
+    merged_data, _ = load_and_merge_data()
+    create_strategy_heatmap(merged_data)
+    create_strategy_sequence(merged_data)
     
-    print("Generating enhanced parameter distribution analysis...")
-    create_enhanced_parameter_distribution(results_df)
+    print("Generating parameter evolution plot...")
+    create_parameter_evolution(results_df)
     
-    print("Generating gender parameter comparison...")
-    create_gender_parameter_comparison(results_df, trial_data)
+    print("Generating model evaluation plots...")
+    create_model_evaluation_plot(results_df)
     
-    print("Generating completion analysis...")
+    print("Generating performance analysis plots...")
     create_completion_analysis(results_df)
     
+    print("Generating learning dynamics plots...")
+    # Load trajectories for learning dynamics
+    try:
+        with open(os.path.join(output_dir, 'data/parameter_trajectories.pkl'), 'rb') as f:
+            all_trajectories = pickle.load(f)
+        analyze_learning_dynamics(results_df, all_trajectories)
+    except FileNotFoundError:
+        print("Warning: Parameter trajectories file not found. Skipping learning dynamics analysis.")
+    
     print("All visualizations completed!")
-
 
 def analyze_individual_differences(generate_plots=True):
     """Analyze individual differences and strategy combinations"""
@@ -1810,6 +1746,7 @@ def analyze_individual_differences(generate_plots=True):
     # Store results
     all_results = []
     all_posteriors = {}
+    all_trajectories = {}
     
     # Process data for each participant
     for subject_id in merged_data['ID'].unique():
@@ -1818,14 +1755,17 @@ def analyze_individual_differences(generate_plots=True):
         print(f"\nProcessing participant {subject_id}")
         print("-" * 50)
         
-        # Fit parameters using Bayesian MCMC
-        results = fit_parameters_bayesian(subject_data)
+        # Fit parameters using Sequential MCMC
+        results = fit_parameters_sequential(subject_data)
         
-        # Store complete posterior distributions
+        # Store trajectories
+        all_trajectories[subject_id] = results['trajectories']
+        
+        # Store posterior distributions (approximated from final particle distribution)
         all_posteriors[subject_id] = {
-            'theta_mean': results['theta'].flatten(),
-            'omega_mean': results['omega'].flatten(),
-            'r_mean': results['r'].flatten()
+            'theta_mean': results['theta'],
+            'omega_mean': results['omega'],
+            'r_mean': results['r']
         }
         
         # Get completion information
@@ -1834,12 +1774,12 @@ def analyze_individual_differences(generate_plots=True):
         # Store summary statistics
         result = {
             'ID': subject_id,
-            'theta_mean': np.mean(results['theta']),
-            'theta_std': np.std(results['theta']),
-            'omega_mean': np.mean(results['omega']),
-            'omega_std': np.std(results['omega']),
-            'r_mean': np.mean(results['r']),
-            'r_std': np.std(results['r']),
+            'theta_mean': results['theta'],
+            'theta_std': results['theta_std'],
+            'omega_mean': results['omega'],
+            'omega_std': results['omega_std'],
+            'r_mean': results['r'],
+            'r_std': results['r_std'],
             'motor': results['motor'],
             'age': subject_data['Age'].iloc[0],
             'gender': subject_data['Gender'].iloc[0],
@@ -1853,17 +1793,27 @@ def analyze_individual_differences(generate_plots=True):
             'unlock_time': completion_info['unlock_time'],
         }
         all_results.append(result)
+        
+        # Generate and save individual trajectory plots
+        if generate_plots:
+            fig = create_parameter_trajectory_plot(subject_data, results['trajectories'])
+            plt.savefig(os.path.join(output_dir, f'parameter_analysis/trajectories_{subject_id}.png'), 
+                       dpi=300, bbox_inches='tight')
+            plt.close()
     
     # Convert to DataFrame
     results_df = pd.DataFrame(all_results)
     
     # Save results
-    results_df.to_csv('./output/individual_results.csv', index=False)
-    with open('./output/posterior_distributions.pkl', 'wb') as f:
+    results_df.to_csv(os.path.join(output_dir, 'data/individual_results.csv'), index=False)
+    with open(os.path.join(output_dir, 'data/posterior_distributions.pkl'), 'wb') as f:
         pickle.dump(all_posteriors, f)
+    with open(os.path.join(output_dir, 'data/parameter_trajectories.pkl'), 'wb') as f:
+        pickle.dump(all_trajectories, f)
     
-    print("\nIndividual results have been saved to './output/individual_results.csv'")
-    print("Posterior distributions have been saved to './output/posterior_distributions.pkl'")
+    print(f"\nIndividual results have been saved to '{os.path.join(output_dir, 'data/individual_results.csv')}'")
+    print(f"Posterior distributions have been saved to '{os.path.join(output_dir, 'data/posterior_distributions.pkl')}'")
+    print(f"Parameter trajectories have been saved to '{os.path.join(output_dir, 'data/parameter_trajectories.pkl')}'")
     
     # Print completion statistics
     print("\nCompletion Statistics:")
@@ -1881,8 +1831,314 @@ def analyze_individual_differences(generate_plots=True):
     if generate_plots:
         print("Starting visualization generation...")
         generate_all_visualizations(results_df, all_posteriors)
+        
+        print("Analyzing learning dynamics...")
+        analyze_learning_dynamics(results_df, all_trajectories)
     
     return results_df, all_posteriors
+
+def analyze_learning_dynamics(results_df: pd.DataFrame, all_trajectories: Dict):
+    """
+    Analyze learning dynamics using parameter trajectories
+    
+    Args:
+        results_df: DataFrame containing analysis results
+        all_trajectories: Dictionary containing parameter trajectories for all subjects
+    """
+    # Create output directory
+    os.makedirs(os.path.join(output_dir, 'learning_dynamics'), exist_ok=True) 
+    
+    # Initialize report
+    report = []
+    report.append("Learning Dynamics Analysis Report")
+    report.append("=" * 50)
+    
+    # 1. Analyze learning phases
+    plt.figure(figsize=(15, 10))
+    
+    # Calculate average parameter trajectories
+    avg_trajectories = {
+        'theta': [],
+        'omega': [],
+        'r': []
+    }
+    
+    max_trials = max(traj['theta'].shape[0] for traj in all_trajectories.values())
+    
+    for param in avg_trajectories.keys():
+        param_data = np.zeros((len(all_trajectories), max_trials))
+        for i, (subject_id, trajectories) in enumerate(all_trajectories.items()):
+            n_trials = trajectories[param].shape[0]
+            param_data[i, :n_trials] = np.average(trajectories[param], axis=1)
+            param_data[i, n_trials:] = param_data[i, n_trials-1]  # Pad with last value
+        
+        avg_trajectories[param] = np.nanmean(param_data, axis=0)
+    
+    # Plot average learning curves
+    for i, (param, label) in enumerate([('theta', 'Learning Ability (θ)'),
+                                      ('omega', 'Social Influence (ω)'),
+                                      ('r', 'Exploration (r)')]):
+        plt.subplot(3, 1, i+1)
+        plt.plot(avg_trajectories[param], color=PARAM_COLORS[param], linewidth=2)
+        
+        # Add confidence intervals
+        plt.fill_between(range(max_trials),
+                        np.percentile(param_data, 25, axis=0),
+                        np.percentile(param_data, 75, axis=0),
+                        color=PARAM_COLORS[param],
+                        alpha=0.2)
+        
+        plt.title(f'Average {label} Evolution')
+        plt.xlabel('Trial Number')
+        plt.ylabel(label)
+        plt.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'learning_dynamics/average_learning_curves.png'), dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # 2. Identify learning patterns
+    report.append("\nLearning Pattern Analysis:")
+    report.append("-" * 30)
+    
+    # Calculate learning speed (rate of change in theta)
+    learning_speeds = []
+    for subject_id, trajectories in all_trajectories.items():
+        theta_trajectory = np.average(trajectories['theta'], axis=1)
+        learning_speed = np.mean(np.diff(theta_trajectory))
+        learning_speeds.append({
+            'ID': subject_id,
+            'learning_speed': learning_speed,
+            'solved': results_df[results_df['ID'] == subject_id]['solved'].iloc[0]
+        })
+    
+    learning_speeds_df = pd.DataFrame(learning_speeds)
+    
+    # Compare learning speeds between successful and unsuccessful participants
+    successful = learning_speeds_df[learning_speeds_df['solved'] == 1]['learning_speed']
+    unsuccessful = learning_speeds_df[learning_speeds_df['solved'] == 0]['learning_speed']
+    
+    t_stat, p_val = stats.ttest_ind(successful, unsuccessful)
+    report.append("\nLearning Speed Comparison:")
+    report.append(f"Successful participants: {successful.mean():.3f} ± {successful.std():.3f}")
+    report.append(f"Unsuccessful participants: {unsuccessful.mean():.3f} ± {unsuccessful.std():.3f}")
+    report.append(f"T-test: t={t_stat:.3f}, p={p_val:.3f}")
+    
+    # 3. Analyze strategy adaptation
+    plt.figure(figsize=(12, 6))
+    
+    # Calculate strategy changes
+    strategy_changes = []
+    for subject_id, trajectories in all_trajectories.items():
+        omega_trajectory = np.average(trajectories['omega'], axis=1)
+        r_trajectory = np.average(trajectories['r'], axis=1)
+        
+        # Calculate ratio of exploration to social learning
+        strategy_ratio = r_trajectory / omega_trajectory
+        strategy_changes.append({
+            'ID': subject_id,
+            'initial_ratio': strategy_ratio[0],
+            'final_ratio': strategy_ratio[-1],
+            'solved': results_df[results_df['ID'] == subject_id]['solved'].iloc[0]
+        })
+    
+    strategy_changes_df = pd.DataFrame(strategy_changes)
+    
+    # Plot strategy adaptation
+    plt.scatter(strategy_changes_df[strategy_changes_df['solved'] == 1]['initial_ratio'],
+                strategy_changes_df[strategy_changes_df['solved'] == 1]['final_ratio'],
+                color='green', alpha=0.6, label='Successful')
+    plt.scatter(strategy_changes_df[strategy_changes_df['solved'] == 0]['initial_ratio'],
+                strategy_changes_df[strategy_changes_df['solved'] == 0]['final_ratio'],
+                color='red', alpha=0.6, label='Unsuccessful')
+    
+    plt.plot([0, 1], [0, 1], 'k--', alpha=0.5)
+    plt.xlabel('Initial Exploration/Social Learning Ratio')
+    plt.ylabel('Final Exploration/Social Learning Ratio')
+    plt.title('Strategy Adaptation Patterns')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    plt.savefig(os.path.join(output_dir, 'learning_dynamics/strategy_adaptation.png'), dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Save report
+    with open(os.path.join(output_dir, 'reports/learning_dynamics_report.txt'), 'w', encoding='utf-8') as f:
+        f.write('\n'.join(report))
+
+def create_parameter_trajectory_plot(subject_data: pd.DataFrame, trajectories: Dict):
+    """
+    Create parameter trajectory visualization for individual participant
+    
+    Args:
+        subject_data: DataFrame containing participant trial data
+        trajectories: Dictionary containing parameter trajectories
+    
+    Returns:
+        matplotlib.figure.Figure: Generated figure object
+    """
+    plt.figure(figsize=(15, 10))
+    
+    params = ['theta', 'omega', 'r']
+    param_labels = ['Learning Ability (θ)', 'Social Influence (ω)', 'Exploration Rate (r)']
+    
+    for i, (param, label) in enumerate(zip(params, param_labels)):
+        plt.subplot(3, 1, i+1)
+        
+        # Plot particle trajectories (low alpha)
+        for p in range(min(50, trajectories[param].shape[1])):  # Only plot subset of particles for clarity
+            plt.plot(trajectories[param][:, p], 
+                    alpha=0.1, 
+                    color=PARAM_COLORS[param])
+        
+        # Plot weighted mean trajectory
+        weighted_mean = np.average(trajectories[param], 
+                                 axis=1, 
+                                 weights=trajectories['weights'])
+        plt.plot(weighted_mean, 
+                color='black', 
+                linewidth=2, 
+                label='Weighted Mean')
+        
+        # Add success/failure markers
+        successes = subject_data[subject_data['Worked'] == 1].index - subject_data.index[0]
+        failures = subject_data[subject_data['Worked'] == 0].index - subject_data.index[0]
+        
+        plt.scatter(successes, 
+                   weighted_mean[successes], 
+                   color='green', 
+                   alpha=0.5, 
+                   label='Success')
+        plt.scatter(failures, 
+                   weighted_mean[failures], 
+                   color='red', 
+                   alpha=0.5, 
+                   label='Failure')
+        
+        # Add confidence intervals
+        percentile_25 = np.percentile(trajectories[param], 25, axis=1)
+        percentile_75 = np.percentile(trajectories[param], 75, axis=1)
+        plt.fill_between(range(len(weighted_mean)), 
+                        percentile_25, 
+                        percentile_75, 
+                        color=PARAM_COLORS[param], 
+                        alpha=0.2)
+        
+        plt.title(f'{label} Evolution')
+        plt.xlabel('Trial Number')
+        plt.ylabel(label)
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+    
+    # Add overall information
+    completion_status = "Completed" if subject_data['Solved'].iloc[0] else "Incomplete"
+    num_unlocked = subject_data['NumUnlock'].iloc[0]
+    plt.suptitle(f'Parameter Trajectories for Participant {subject_data["ID"].iloc[0]}\n'
+                f'({completion_status}, {num_unlocked}/5 locks)', 
+                y=1.02)
+    
+    plt.tight_layout()
+    return plt.gcf()
+
+def fit_parameters_sequential(subject_data: pd.DataFrame) -> Dict:
+    """
+    Fit parameters using Sequential Monte Carlo (Particle Filter) sampling
+    
+    Args:
+        subject_data: DataFrame containing participant data
+    
+    Returns:
+        Dict: Dictionary containing parameter estimates and trajectories
+    """
+    # Get completion information
+    solved = subject_data['Solved'].iloc[0]
+    num_unlock = subject_data['NumUnlock'].iloc[0]
+    unlock_time = subject_data['UnlockTime'].iloc[0]
+    
+    # Calculate motor skill (error rate)
+    errors = subject_data['Error'].sum()
+    total = len(subject_data)
+    motor = 1 - (errors / total)
+    
+    # Initialize particle filter
+    n_particles = 1000
+    particles = {
+        'theta': np.random.beta(2, 2, n_particles),  # Learning ability
+        'omega': np.random.pareto(3.0, n_particles) + 1.0,  # Social influence
+        'r': np.random.uniform(0, 1, n_particles),  # Exploration rate
+        'weights': np.ones(n_particles) / n_particles
+    }
+    
+    # Store parameter trajectories
+    trajectories = {
+        'theta': np.zeros((len(subject_data), n_particles)),
+        'omega': np.zeros((len(subject_data), n_particles)),
+        'r': np.zeros((len(subject_data), n_particles)),
+        'weights': np.zeros((len(subject_data), n_particles))
+    }
+    
+    # Process each trial sequentially
+    for t in range(len(subject_data)):
+        trial = subject_data.iloc[t]
+        
+        # Calculate likelihood for each particle
+        success_probs = np.array([
+            calculate_success_probability(
+                theta=particles['theta'][i],
+                motor_skill=motor,
+                omega=particles['omega'][i],
+                r=particles['r'][i]
+            ) for i in range(n_particles)
+        ])
+        
+        # Update weights based on observation
+        likelihood = success_probs if trial['Worked'] == 1 else (1 - success_probs)
+        particles['weights'] *= likelihood
+        particles['weights'] /= particles['weights'].sum()  # Normalize weights
+        
+        # Store current state
+        for param in ['theta', 'omega', 'r', 'weights']:
+            trajectories[param][t] = particles[param]
+        
+        # Resample if effective sample size is too low
+        n_eff = 1 / (particles['weights'] ** 2).sum()
+        if n_eff < n_particles / 2:
+            indices = np.random.choice(n_particles, size=n_particles, p=particles['weights'])
+            for param in ['theta', 'omega', 'r']:
+                particles[param] = particles[param][indices]
+            particles['weights'] = np.ones(n_particles) / n_particles
+            
+            # Add small noise to parameters (parameter evolution)
+            particles['theta'] += np.random.normal(0, 0.01, n_particles)
+            particles['theta'] = np.clip(particles['theta'], 0.001, 0.999)
+            
+            particles['omega'] += np.random.normal(0, 0.1, n_particles)
+            particles['omega'] = np.maximum(particles['omega'], 1.0)
+            
+            particles['r'] += np.random.normal(0, 0.01, n_particles)
+            particles['r'] = np.clip(particles['r'], 0.001, 0.999)
+    
+    # Calculate final parameter estimates and uncertainties
+    final_estimates = {
+        'theta': np.average(particles['theta'], weights=particles['weights']),
+        'theta_std': np.sqrt(np.average((particles['theta'] - np.average(particles['theta'], weights=particles['weights']))**2, 
+                                      weights=particles['weights'])),
+        'omega': np.average(particles['omega'], weights=particles['weights']),
+        'omega_std': np.sqrt(np.average((particles['omega'] - np.average(particles['omega'], weights=particles['weights']))**2,
+                                      weights=particles['weights'])),
+        'r': np.average(particles['r'], weights=particles['weights']),
+        'r_std': np.sqrt(np.average((particles['r'] - np.average(particles['r'], weights=particles['weights']))**2,
+                                  weights=particles['weights'])),
+        'motor': motor,
+        'completion_info': {
+            'solved': solved,
+            'num_unlock': num_unlock,
+            'unlock_time': unlock_time,
+        },
+        'trajectories': trajectories
+    }
+    
+    return final_estimates
 
 if __name__ == "__main__":
     import argparse
@@ -1894,6 +2150,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     if args.plots_only:
-        generate_all_visualizations(load_from_files=True)
+        print("Generating plots from saved files...")
+        generate_all_visualizations()
     else:
+        print("Running full analysis...")
         analyze_individual_differences(generate_plots=True)

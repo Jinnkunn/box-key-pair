@@ -1,0 +1,172 @@
+Basic Statistical Analysis
+==================================================
+
+Sample Statistics and Power Analysis:
+Total number of subjects: 100
+Statistical power (medium effect): 0.998
+Age range: 7.1 - 11.0 years
+Average number of trials: 32.8 ± 15.0
+
+Age Distribution Analysis:
+Age normality test (Shapiro-Wilk): W=0.947, p=0.001
+Age distribution: Non-normal
+
+Success Rate Analysis:
+Mean success rate: 0.186 ± 0.162
+Success rate range: 0.014 - 1.000
+Skewness: 2.274
+Kurtosis: 6.709
+
+Performance vs. Chance Level:
+One-sample t-test: t=-19.370, p=0.000
+Interpretation: Below chance level (p < 0.05)
+
+Parameter Analysis
+==================================================
+
+Learning Ability (θ):
+Mean: 0.080 ± 0.068
+Median: 0.065
+Range: 0.006 - 0.539
+Normality test: W=0.700, p=0.000
+Effect size (vs. neutral): d=-6.157
+Effect magnitude: Large
+
+Social Influence Weight (ω):
+Mean: 1.320 ± 0.157
+Median: 1.288
+Range: 1.118 - 1.985
+Normality test: W=0.860, p=0.000
+Effect size (vs. neutral): d=5.236
+Effect magnitude: Large
+
+Exploration Rate (r):
+Mean: 0.101 ± 0.071
+Median: 0.085
+Range: 0.012 - 0.536
+Normality test: W=0.778, p=0.000
+Effect size (vs. neutral): d=-5.594
+Effect magnitude: Large
+
+Motor Skill (M):
+Mean: 0.972 ± 0.046
+Median: 0.993
+Range: 0.714 - 1.000
+Normality test: W=0.644, p=0.000
+Effect size (vs. neutral): d=10.148
+Effect magnitude: Large
+
+Correlation Analysis
+==================================================
+
+Learning Ability (θ) and Exploration Rate (r):
+Correlation coefficient: r=0.879
+Statistical significance: p=0.000
+Effect size interpretation: Very strong
+Regression analysis:
+  Slope: 0.919 ± 0.050
+  R-squared: 0.772
+Partial correlation (controlling for Social Influence Weight (ω)): r=0.886
+Partial correlation (controlling for Motor Skill (M)): r=0.876
+
+Learning Ability (θ) and Motor Skill (M):
+Correlation coefficient: r=-0.287
+Statistical significance: p=0.004
+Effect size interpretation: Weak
+Regression analysis:
+  Slope: -0.195 ± 0.066
+  R-squared: 0.082
+Partial correlation (controlling for Social Influence Weight (ω)): r=-0.286
+Partial correlation (controlling for Exploration Rate (r)): r=-0.255
+
+Learning Ability (θ) and success_rate:
+Correlation coefficient: r=0.948
+Statistical significance: p=0.000
+Effect size interpretation: Very strong
+Regression analysis:
+  Slope: 2.251 ± 0.076
+  R-squared: 0.899
+Partial correlation (controlling for Social Influence Weight (ω)): r=0.948
+Partial correlation (controlling for Exploration Rate (r)): r=0.748
+Partial correlation (controlling for Motor Skill (M)): r=0.944
+
+Exploration Rate (r) and success_rate:
+Correlation coefficient: r=0.912
+Statistical significance: p=0.000
+Effect size interpretation: Very strong
+Regression analysis:
+  Slope: 2.070 ± 0.094
+  R-squared: 0.831
+Partial correlation (controlling for Learning Ability (θ)): r=0.516
+Partial correlation (controlling for Social Influence Weight (ω)): r=0.915
+Partial correlation (controlling for Motor Skill (M)): r=0.909
+
+Motor Skill (M) and success_rate:
+Correlation coefficient: r=-0.255
+Statistical significance: p=0.010
+Effect size interpretation: Weak
+Regression analysis:
+  Slope: -0.889 ± 0.340
+  R-squared: 0.065
+Partial correlation (controlling for Learning Ability (θ)): r=0.054
+Partial correlation (controlling for Social Influence Weight (ω)): r=-0.254
+Partial correlation (controlling for Exploration Rate (r)): r=-0.202
+
+Strategy Usage Analysis
+==================================================
+
+Strategy Comparison (ANOVA):
+F-statistic: 20.978
+p-value: 0.000
+
+Color Matching Strategy:
+Usage rate: 0.206 ± 0.108
+
+Number Matching Strategy:
+Usage rate: 0.215 ± 0.180
+Correlation with Learning Ability (θ): r=0.929, p=0.000
+Effect size interpretation: Very strong
+Correlation with Exploration Rate (r): r=0.872, p=0.000
+Effect size interpretation: Very strong
+Correlation with Motor Skill (M): r=-0.489, p=0.000
+Effect size interpretation: Moderate
+
+Shape Matching Strategy:
+Usage rate: 0.105 ± 0.098
+Correlation with Motor Skill (M): r=0.222, p=0.026
+Effect size interpretation: Weak
+
+High Performers Analysis
+==================================================
+
+Number of high performers: 16 (16.0%)
+
+High vs. Low Performers Comparison:
+
+Learning Ability (θ):
+High performers: 0.193 ± 0.102
+Low performers: 0.059 ± 0.028
+t-statistic: 10.369, p-value: 0.000
+Effect size (Cohen's d): 1.793
+Effect magnitude: Large
+
+Social Influence Weight (ω):
+High performers: 1.330 ± 0.065
+Low performers: 1.318 ± 0.169
+t-statistic: 0.276, p-value: 0.783
+Effect size (Cohen's d): 0.093
+Effect magnitude: Negligible
+
+Exploration Rate (r):
+High performers: 0.219 ± 0.096
+Low performers: 0.079 ± 0.035
+t-statistic: 10.360, p-value: 0.000
+Effect size (Cohen's d): 1.941
+Effect magnitude: Large
+
+Motor Skill (M):
+High performers: 0.937 ± 0.095
+Low performers: 0.978 ± 0.026
+t-statistic: -3.420, p-value: 0.001
+Effect size (Cohen's d): -0.593
+Effect magnitude: Medium
