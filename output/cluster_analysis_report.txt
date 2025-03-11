@@ -1,0 +1,33 @@
+Cluster Analysis Report
+==================================================
+
+Optimal number of clusters: 2
+Silhouette score: 0.647
+
+Cluster 0:
+--------------------
+Size: 91 participants
+Completion rate: 62.64%
+Average unlocks: 4.16
+Average completion time: 234.60s
+Average success rate: 14.90%
+
+Parameter averages:
+Learning ability (θ): 0.097
+Social influence (ω): 1.221
+Exploration rate (r): 0.056
+Motor skill: 0.980
+
+Cluster 1:
+--------------------
+Size: 9 participants
+Completion rate: 100.00%
+Average unlocks: 5.00
+Average completion time: 111.02s
+Average success rate: 56.33%
+
+Parameter averages:
+Learning ability (θ): 0.312
+Social influence (ω): 1.248
+Exploration rate (r): 0.188
+Motor skill: 0.888

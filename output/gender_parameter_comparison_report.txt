@@ -1,0 +1,26 @@
+Gender Parameter Comparison Report
+==================================================
+
+Statistics for Theta (Learning Rate):
+Boys (n=54): mean=0.127, std=0.099
+Girls (n=46): mean=0.105, std=0.056
+Mann-Whitney U test: p=0.432
+Effect size (Cohen's d): 0.263
+
+Statistics for Omega (Forgetting Rate):
+Boys (n=54): mean=1.226, std=0.039
+Girls (n=46): mean=1.221, std=0.006
+Mann-Whitney U test: p=0.904
+Effect size (Cohen's d): 0.187
+
+Statistics for R (Reward Sensitivity):
+Boys (n=54): mean=0.075, std=0.072
+Girls (n=46): mean=0.060, std=0.033
+Mann-Whitney U test: p=0.393
+Effect size (Cohen's d): 0.266
+
+Statistics for Motor Noise:
+Boys (n=54): mean=0.973, std=0.052
+Girls (n=46): mean=0.970, std=0.039
+Mann-Whitney U test: p=0.142
+Effect size (Cohen's d): 0.083
