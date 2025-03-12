@@ -38,6 +38,12 @@ from visualization.cluster.plots import (
     create_success_vs_completion_plot,
     create_unlocks_by_cluster_plot
 )
+# Import report generation modules
+from reports.cluster.reports import generate_cluster_analysis_report
+from reports.performance.reports import generate_performance_analysis_report
+from reports.learning.reports import generate_learning_dynamics_report
+from reports.strategy.reports import generate_strategy_analysis_report
+from reports.parameter.reports import generate_parameter_analysis_report
 
 def partial_correlation(x, y, control):
     """Calculate partial correlation between x and y controlling for control variable."""
@@ -323,9 +329,17 @@ def analyze_individual_differences(generate_plots=True):
     print(f"Posterior distributions have been saved to '{os.path.join(output_dir, 'data/posterior_distributions.pkl')}'")
     print(f"Parameter trajectories have been saved to '{os.path.join(output_dir, 'data/parameter_trajectories.pkl')}'")
     
-    # Generate visualizations
+    # Generate reports and visualizations
     if generate_plots:
-        print("\nGenerating visualizations...")
+        print("\nGenerating reports and visualizations...")
+        
+        # Generate reports
+        print("Generating analysis reports...")
+        generate_parameter_analysis_report(results_df, output_dir)
+        generate_learning_dynamics_report(results_df, all_trajectories, output_dir)
+        generate_strategy_analysis_report(results_df, output_dir)
+        generate_performance_analysis_report(results_df, output_dir)
+        generate_cluster_analysis_report(results_df, output_dir)
         
         # Parameter distributions and correlations
         print("Generating parameter visualizations...")

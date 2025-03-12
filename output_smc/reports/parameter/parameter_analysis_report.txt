@@ -1,0 +1,89 @@
+Parameter Analysis Report
+==================================================
+
+1. Distribution Analysis
+------------------------------
+
+Learning Ability (θ):
+Mean: 0.080
+Std: 0.067
+Range: 0.008 - 0.530
+Quartiles: 0.039, 0.067, 0.093
+Shapiro-Wilk Normality Test: statistic = 0.708, p = 0.000
+Distribution: Non-normal
+
+Social Influence (ω):
+Mean: 1.343
+Std: 0.234
+Range: 1.107 - 2.542
+Quartiles: 1.204, 1.290, 1.396
+Shapiro-Wilk Normality Test: statistic = 0.683, p = 0.000
+Distribution: Non-normal
+
+Exploration Rate (r):
+Mean: 0.101
+Std: 0.073
+Range: 0.015 - 0.533
+Quartiles: 0.058, 0.079, 0.124
+Shapiro-Wilk Normality Test: statistic = 0.769, p = 0.000
+Distribution: Non-normal
+
+2. Gender Differences
+------------------------------
+
+Learning Ability (θ):
+Boy: 0.087 ± 0.083 (n=54)
+Girl: 0.071 ± 0.041 (n=46)
+Gender Comparison T-test: statistic = 1.215, p = 0.227
+
+Social Influence (ω):
+Boy: 1.320 ± 0.187 (n=54)
+Girl: 1.372 ± 0.279 (n=46)
+Gender Comparison T-test: statistic = -1.110, p = 0.270
+
+Exploration Rate (r):
+Boy: 0.110 ± 0.086 (n=54)
+Girl: 0.091 ± 0.053 (n=46)
+Gender Comparison T-test: statistic = 1.248, p = 0.215
+
+3. Age Correlations
+------------------------------
+
+Learning Ability (θ):
+Age Correlation: statistic = 0.247, p = 0.013
+
+Social Influence (ω):
+Age Correlation: statistic = -0.056, p = 0.580
+
+Exploration Rate (r):
+Age Correlation: statistic = 0.195, p = 0.052
+
+4. Parameter Relationships
+------------------------------
+
+Learning Ability (θ) vs Social Influence (ω):
+Correlation: statistic = -0.036, p = 0.720
+
+Learning Ability (θ) vs Exploration Rate (r):
+Correlation: statistic = 0.907, p = 0.000
+
+Social Influence (ω) vs Exploration Rate (r):
+Correlation: statistic = 0.005, p = 0.958
+
+5. Performance Correlations
+------------------------------
+
+Learning Ability (θ):
+Success Rate Correlation: statistic = 0.944, p = 0.000
+Number of Unlocks Correlation: statistic = 0.405, p = 0.000
+Completion Time Correlation: statistic = -0.695, p = 0.000
+
+Social Influence (ω):
+Success Rate Correlation: statistic = -0.014, p = 0.889
+Number of Unlocks Correlation: statistic = 0.004, p = 0.970
+Completion Time Correlation: statistic = 0.053, p = 0.597
+
+Exploration Rate (r):
+Success Rate Correlation: statistic = 0.942, p = 0.000
+Number of Unlocks Correlation: statistic = 0.403, p = 0.000
+Completion Time Correlation: statistic = -0.687, p = 0.000

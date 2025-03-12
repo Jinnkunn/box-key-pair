@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 import os
+from ..utils import safe_statistical_test, format_statistical_result
 
 def generate_cluster_analysis_report(results_df: pd.DataFrame, output_dir: str):
     """
@@ -41,8 +42,8 @@ def generate_cluster_analysis_report(results_df: pd.DataFrame, output_dir: str):
         'success_rate': 'Success Rate'
     }
     
-    cluster_means = results_df_clustered.groupby('cluster')[features].mean()
-    cluster_stds = results_df_clustered.groupby('cluster')[features].std()
+    cluster_means = results_df_clustered.groupby('cluster', observed=True)[features].mean()
+    cluster_stds = results_df_clustered.groupby('cluster', observed=True)[features].std()
     
     for cluster in sorted(results_df_clustered['cluster'].unique()):
         report.append(f"\nCluster {cluster} Characteristics:")
@@ -57,15 +58,18 @@ def generate_cluster_analysis_report(results_df: pd.DataFrame, output_dir: str):
     
     for feature in features:
         report.append(f"\n{feature_labels[feature]} Comparison:")
-        f_stat, p_val = stats.f_oneway(*[group[feature].values 
-                                        for name, group in results_df_clustered.groupby('cluster')])
-        report.append(f"ANOVA results: F = {f_stat:.3f}, p = {p_val:.3f}")
+        # Get groups for ANOVA
+        groups = [group[feature].values for name, group in results_df_clustered.groupby('cluster', observed=True)]
+        
+        # Perform ANOVA with safety checks
+        stat, p, msg = safe_statistical_test('f_oneway', *groups, min_samples=3)
+        report.append(format_statistical_result(stat, p, msg, "ANOVA"))
     
     # 4. Completion Analysis by Cluster
     report.append("\n4. Completion Analysis by Cluster")
     report.append("-" * 30)
     
-    completion_rates = results_df_clustered.groupby('cluster')['solved'].agg(['count', 'mean'])
+    completion_rates = results_df_clustered.groupby('cluster', observed=True)['solved'].agg(['count', 'mean'])
     report.append("\nCompletion Rates by Cluster:")
     for cluster in sorted(results_df_clustered['cluster'].unique()):
         count = completion_rates.loc[cluster, 'count']

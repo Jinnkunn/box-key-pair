@@ -1,0 +1,59 @@
+Strategy Analysis Report
+==================================================
+
+1. Strategy Usage Patterns
+------------------------------
+
+Color Matching:
+Mean usage rate: 0.206
+Std: 0.108
+Range: 0.048 - 0.551
+Users with non-zero usage: 100/100
+
+Number Matching:
+Mean usage rate: 0.215
+Std: 0.180
+Range: 0.034 - 1.000
+Users with non-zero usage: 100/100
+
+Shape Matching:
+Mean usage rate: 0.105
+Std: 0.098
+Range: 0.000 - 0.423
+Users with non-zero usage: 84/100
+
+2. Strategy Effectiveness
+------------------------------
+
+Color Matching:
+Success rate: 0.186 ± 0.016
+Sample size: 100
+
+Number Matching:
+Success rate: 0.186 ± 0.016
+Sample size: 100
+
+Shape Matching:
+Success rate: 0.156 ± 0.013
+Sample size: 84
+Comparison with non-users:
+Non-users success rate: 0.348
+T-test: t = -4.813, p = 0.000
+
+3. Strategy Transitions
+------------------------------
+
+Dominant Strategy Distribution:
+
+4. Strategy Combinations
+------------------------------
+
+Strategy Combination Distribution:
+Color Matching+Number Matching: 44 participants (44.0%)
+Color Matching+Number Matching+Shape Matching: 21 participants (21.0%)
+Color Matching: 9 participants (9.0%)
+Number Matching: 8 participants (8.0%)
+Color Matching+Shape Matching: 7 participants (7.0%)
+Number Matching+Shape Matching: 7 participants (7.0%)
+Shape Matching: 2 participants (2.0%)
+None: 2 participants (2.0%)

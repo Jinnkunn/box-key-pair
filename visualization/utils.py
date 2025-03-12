@@ -139,7 +139,15 @@ def setup_3d_axis(ax: Axes, title: str = None, xlabel: str = None, ylabel: str =
 def add_statistical_annotations(ax: Axes, stats_dict: Dict, loc: str = 'upper left',
                               box: bool = True) -> None:
     """Add statistical annotations to a plot."""
-    text = '\n'.join([f'{k}: {v:.3f}' for k, v in stats_dict.items()])
+    # Format each value based on its type
+    formatted_items = []
+    for k, v in stats_dict.items():
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            formatted_items.append(f'{k}: {v:.3f}')
+        else:
+            formatted_items.append(f'{k}: {v}')
+    
+    text = '\n'.join(formatted_items)
     
     bbox_props = dict(
         facecolor='white',
@@ -177,4 +185,82 @@ def set_axis_style(ax: Axes, style: str = 'default') -> None:
         for spine in ax.spines.values():
             spine.set_visible(True)
             spine.set_color(COLOR_PALETTE['neutral'])
-            spine.set_linewidth(1.0) 
+            spine.set_linewidth(1.0)
+
+def safe_statistical_test(test_type: str, *args, **kwargs) -> Tuple[float, float, str]:
+    """
+    Safely perform statistical tests with sample size checks.
+    
+    Args:
+        test_type: Type of test ('ttest_ind', 'pearsonr', 'shapiro', etc.)
+        *args: Arguments for the test
+        **kwargs: Keyword arguments for the test
+    
+    Returns:
+        Tuple[float, float, str]: (statistic, p_value, message)
+    """
+    try:
+        # Check sample sizes
+        min_samples = 3  # Minimum required samples for statistical tests
+        
+        if test_type == 'ttest_ind':
+            group1, group2 = args
+            if len(group1) < min_samples or len(group2) < min_samples:
+                return np.nan, 1.0, f"Insufficient samples (n1={len(group1)}, n2={len(group2)})"
+            stat, pval = stats.ttest_ind(*args, **kwargs)
+            
+        elif test_type == 'pearsonr':
+            x, y = args
+            if len(x) < min_samples:
+                return np.nan, 1.0, f"Insufficient samples (n={len(x)})"
+            stat, pval = stats.pearsonr(*args, **kwargs)
+            
+        elif test_type == 'shapiro':
+            data = args[0]
+            if len(data) < min_samples:
+                return np.nan, 1.0, f"Insufficient samples (n={len(data)})"
+            stat, pval = stats.shapiro(*args, **kwargs)
+            
+        elif test_type == 'f_oneway':
+            min_group_size = min(len(group) for group in args)
+            if min_group_size < min_samples:
+                return np.nan, 1.0, f"Insufficient samples in one or more groups (min n={min_group_size})"
+            stat, pval = stats.f_oneway(*args, **kwargs)
+            
+        else:
+            raise ValueError(f"Unsupported test type: {test_type}")
+        
+        return stat, pval, "Test performed successfully"
+        
+    except Exception as e:
+        return np.nan, 1.0, f"Error performing test: {str(e)}"
+
+def format_statistical_result(stat: float, pval: float, msg: str, test_name: str = "") -> str:
+    """
+    Format statistical test results into a readable string.
+    
+    Args:
+        stat: Test statistic
+        pval: P-value
+        msg: Message from the test
+        test_name: Name of the test (optional)
+    
+    Returns:
+        str: Formatted result string
+    """
+    if np.isnan(stat):
+        return f"{test_name}: {msg}"
+    
+    significance = ""
+    if pval < 0.001:
+        significance = "***"
+    elif pval < 0.01:
+        significance = "**"
+    elif pval < 0.05:
+        significance = "*"
+    
+    result = f"{test_name}: stat={stat:.3f}, p={pval:.3f}{significance}"
+    if msg != "Test performed successfully":
+        result += f" ({msg})"
+    
+    return result 

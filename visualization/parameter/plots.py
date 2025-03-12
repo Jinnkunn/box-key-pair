@@ -15,7 +15,9 @@ from ..utils import (
     add_statistical_annotations,
     save_figure,
     set_axis_style,
-    setup_3d_axis
+    setup_3d_axis,
+    safe_statistical_test,
+    format_statistical_result
 )
 from ..config import (
     PARAM_COLORS,
@@ -36,13 +38,14 @@ def create_correlation_heatmap(results_df: pd.DataFrame, output_dir: str) -> Non
                           index=corr_matrix.index, 
                           columns=corr_matrix.columns)
     
-    # Calculate p-values
+    # Calculate p-values using safe_statistical_test
     for i in range(len(params)):
         for j in range(len(params)):
             if i != j:
-                stat, pval = stats.pearsonr(results_df[params[i]], 
-                                          results_df[params[j]])
-                pvalues.iloc[i, j] = pval
+                stat, p_val, msg = safe_statistical_test('pearsonr', 
+                                                       results_df[params[i]].values, 
+                                                       results_df[params[j]].values)
+                pvalues.iloc[i, j] = p_val if p_val is not None else 1.0
     
     # Create figure
     fig, ax = create_figure(figsize='square')
@@ -161,11 +164,12 @@ def create_parameter_qq_plots(results_df: pd.DataFrame, output_dir: str) -> None
         # Create Q-Q plot
         stats.probplot(data, dist="norm", plot=ax)
         
-        # Add Shapiro-Wilk test result
-        stat, pval = stats.shapiro(data)
+        # Add Shapiro-Wilk test result using safe_statistical_test
+        stat, p_val, msg = safe_statistical_test('shapiro', data.values)
         stats_dict = {
             'Shapiro-Wilk': stat,
-            'p-value': pval
+            'p-value': p_val,
+            'note': msg
         }
         add_statistical_annotations(ax, stats_dict)
         
@@ -200,14 +204,15 @@ def create_parameter_violin_plots(results_df: pd.DataFrame, output_dir: str) -> 
                      alpha=ALPHA_VALUES['scatter'],
                      size=4, jitter=0.2, ax=ax)
         
-        # Add statistical test
-        male_data = results_df[results_df['gender'] == 'M'][param]
-        female_data = results_df[results_df['gender'] == 'F'][param]
-        stat, pval = stats.ttest_ind(male_data, female_data)
+        # Add statistical test using safe_statistical_test
+        male_data = results_df[results_df['gender'] == 'M'][param].values
+        female_data = results_df[results_df['gender'] == 'F'][param].values
+        stat, p_val, msg = safe_statistical_test('ttest_ind', male_data, female_data)
         
         stats_dict = {
             't-stat': stat,
-            'p-value': pval
+            'p-value': p_val,
+            'note': msg
         }
         add_statistical_annotations(ax, stats_dict)
         
@@ -266,11 +271,14 @@ def create_parameter_age_evolution(results_df: pd.DataFrame, output_dir: str) ->
                    line_kws={'color': COLOR_PALETTE['neutral']},
                    ax=ax)
         
-        # Calculate correlation
-        corr, pval = stats.pearsonr(results_df['age'], results_df[param])
+        # Calculate correlation using safe_statistical_test
+        stat, p_val, msg = safe_statistical_test('pearsonr', 
+                                               results_df['age'].values, 
+                                               results_df[param].values)
         stats_dict = {
-            'r': corr,
-            'p-value': pval
+            'r': stat,
+            'p-value': p_val,
+            'note': msg
         }
         add_statistical_annotations(ax, stats_dict)
         

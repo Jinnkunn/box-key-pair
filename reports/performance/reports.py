@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 import os
+from ..utils import safe_statistical_test, format_statistical_result
 
 def generate_performance_analysis_report(results_df: pd.DataFrame, output_dir: str):
     """
@@ -27,9 +28,9 @@ def generate_performance_analysis_report(results_df: pd.DataFrame, output_dir: s
     report.append(f"Quartiles: {success_stats['25%']:.3f}, {success_stats['50%']:.3f}, {success_stats['75%']:.3f}")
     
     # Test against chance level
-    t_stat, p_val = stats.ttest_1samp(results_df['success_rate'], 0.5)
+    stat, p_val, msg = safe_statistical_test('ttest_1samp', results_df['success_rate'].values, 0.5)
     report.append("\nComparison with Chance Level (0.5):")
-    report.append(f"T-test: t = {t_stat:.3f}, p = {p_val:.3f}")
+    report.append(format_statistical_result(stat, p_val, msg, "One-sample T-test"))
     
     # 2. Age-Related Performance
     report.append("\n2. Age-Related Performance")
@@ -37,16 +38,18 @@ def generate_performance_analysis_report(results_df: pd.DataFrame, output_dir: s
     
     # Create age groups
     results_df['AgeGroup'] = pd.qcut(results_df['age'], q=4, labels=['Q1', 'Q2', 'Q3', 'Q4'])
-    age_performance = results_df.groupby('AgeGroup')['success_rate'].agg(['mean', 'std', 'count'])
+    age_performance = results_df.groupby('AgeGroup', observed=True)['success_rate'].agg(['mean', 'std', 'count'])
     
-    report.append("\nPerformance by Age Quartile:")
-    for idx, row in age_performance.iterrows():
-        report.append(f"{idx}: {row['mean']:.3f} ± {row['std']:.3f} (n={int(row['count'])})")
+    report.append("\nPerformance by Age Group:")
+    for age_group in age_performance.index:
+        stats = age_performance.loc[age_group]
+        report.append(f"{age_group}: {stats['mean']:.3f} ± {stats['std']:.3f} (n={int(stats['count'])})")
     
     # ANOVA test for age groups
-    age_groups = [group['success_rate'].values for name, group in results_df.groupby('AgeGroup')]
-    f_stat, p_val = stats.f_oneway(*age_groups)
-    report.append(f"\nAge Group ANOVA: F = {f_stat:.3f}, p = {p_val:.3f}")
+    age_groups = [group['success_rate'].values for name, group in results_df.groupby('AgeGroup', observed=True)]
+    stat, p_val, msg = safe_statistical_test('f_oneway', *age_groups)
+    report.append("\nAge Group Comparison:")
+    report.append(format_statistical_result(stat, p_val, msg, "ANOVA"))
     
     # 3. Gender Differences
     report.append("\n3. Gender Differences")
@@ -58,10 +61,11 @@ def generate_performance_analysis_report(results_df: pd.DataFrame, output_dir: s
         report.append(f"{idx}: {row['mean']:.3f} ± {row['std']:.3f} (n={int(row['count'])})")
     
     # T-test for gender differences
-    boys = results_df[results_df['gender'] == 'Boy']['success_rate']
-    girls = results_df[results_df['gender'] == 'Girl']['success_rate']
-    t_stat, p_val = stats.ttest_ind(boys, girls)
-    report.append(f"\nGender Comparison T-test: t = {t_stat:.3f}, p = {p_val:.3f}")
+    boys = results_df[results_df['gender'] == 'Boy']['success_rate'].values
+    girls = results_df[results_df['gender'] == 'Girl']['success_rate'].values
+    stat, p_val, msg = safe_statistical_test('ttest_ind', boys, girls)
+    report.append("\nGender Comparison:")
+    report.append(format_statistical_result(stat, p_val, msg, "Independent T-test"))
     
     # 4. Completion Analysis
     report.append("\n4. Completion Analysis")
