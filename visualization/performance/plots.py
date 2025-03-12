@@ -43,6 +43,20 @@ def calculate_success_probability(theta: float, motor: float, omega: float, r: f
     exploration_effect = r * (1 - base_prob - social_effect)
     return base_prob + social_effect + exploration_effect
 
+def add_stats_if_sufficient(data1, data2, ax, min_samples=2):
+    if len(data1) >= min_samples and len(data2) >= min_samples:
+        stat, pval = stats.ttest_ind(data1, data2)
+        stats_dict = {
+            't-stat': stat,
+            'p-value': pval
+        }
+        add_statistical_annotations(ax, stats_dict)
+    else:
+        stats_dict = {
+            'warning': 'Insufficient sample size'
+        }
+        add_statistical_annotations(ax, stats_dict)
+
 def create_success_rate_plot(results_df: pd.DataFrame, output_dir: str) -> None:
     """Create visualization of success rates and their distribution."""
     # Create figure
@@ -90,12 +104,7 @@ def create_success_rate_plot(results_df: pd.DataFrame, output_dir: str) -> None:
     # Add statistical test
     complete = results_df[results_df['solved'] == 1]['success_rate']
     incomplete = results_df[results_df['solved'] == 0]['success_rate']
-    stat, pval = stats.ttest_ind(complete, incomplete)
-    stats_dict = {
-        't-stat': stat,
-        'p-value': pval
-    }
-    add_statistical_annotations(ax2, stats_dict)
+    add_stats_if_sufficient(complete, incomplete, ax2)
     
     # Style plot 2
     ax2.set_xticks([0, 1])
@@ -327,13 +336,7 @@ def create_performance_by_gender_plot(results_df: pd.DataFrame, output_dir: str)
     # Add statistical test
     male_success = results_df[results_df['gender'] == 'M']['success_rate']
     female_success = results_df[results_df['gender'] == 'F']['success_rate']
-    stat, pval = stats.ttest_ind(male_success, female_success)
-    
-    stats_dict = {
-        't-stat': stat,
-        'p-value': pval
-    }
-    add_statistical_annotations(ax1, stats_dict)
+    add_stats_if_sufficient(male_success, female_success, ax1)
     
     # Style plot 1
     ax1.set_xlabel('Gender')
@@ -382,13 +385,7 @@ def create_performance_by_gender_plot(results_df: pd.DataFrame, output_dir: str)
     # Add statistical test
     male_unlocks = results_df[results_df['gender'] == 'M']['num_unlock']
     female_unlocks = results_df[results_df['gender'] == 'F']['num_unlock']
-    stat, pval = stats.ttest_ind(male_unlocks, female_unlocks)
-    
-    stats_dict = {
-        't-stat': stat,
-        'p-value': pval
-    }
-    add_statistical_annotations(ax3, stats_dict)
+    add_stats_if_sufficient(male_unlocks, female_unlocks, ax3)
     
     # Style plot 3
     ax3.set_xlabel('Gender')
@@ -417,13 +414,7 @@ def create_performance_by_gender_plot(results_df: pd.DataFrame, output_dir: str)
     # Add statistical test
     male_time = results_df[results_df['gender'] == 'M']['unlock_time']
     female_time = results_df[results_df['gender'] == 'F']['unlock_time']
-    stat, pval = stats.ttest_ind(male_time, female_time)
-    
-    stats_dict = {
-        't-stat': stat,
-        'p-value': pval
-    }
-    add_statistical_annotations(ax4, stats_dict)
+    add_stats_if_sufficient(male_time, female_time, ax4)
     
     # Style plot 4
     ax4.set_xlabel('Gender')

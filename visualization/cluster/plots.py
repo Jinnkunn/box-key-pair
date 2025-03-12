@@ -310,6 +310,21 @@ def create_cluster_size_completion_plot(results_df: pd.DataFrame, output_dir: st
     plt.tight_layout()
     save_figure(fig, os.path.join(output_dir, 'visualization/cluster/cluster_size_completion.png'))
 
+def add_stats_if_sufficient(data1, data2, ax, min_samples=2):
+    """添加统计检验结果，但仅在样本量足够时进行。"""
+    if len(data1) >= min_samples and len(data2) >= min_samples:
+        stat, pval = stats.ttest_ind(data1, data2)
+        stats_dict = {
+            't-stat': stat,
+            'p-value': pval
+        }
+        add_statistical_annotations(ax, stats_dict)
+    else:
+        stats_dict = {
+            'warning': 'Insufficient sample size'
+        }
+        add_statistical_annotations(ax, stats_dict)
+
 def create_success_vs_completion_plot(results_df: pd.DataFrame, output_dir: str) -> None:
     """Create visualization of success rate vs completion time by cluster."""
     # Perform clustering if not already done
@@ -326,13 +341,18 @@ def create_success_vs_completion_plot(results_df: pd.DataFrame, output_dir: str)
                         alpha=ALPHA_VALUES['scatter'],
                         s=100)
     
-    # Add correlation statistics
-    corr, pval = stats.pearsonr(results_df_clustered['success_rate'],
-                               results_df_clustered['unlock_time'])
-    stats_dict = {
-        'r': corr,
-        'p-value': pval
-    }
+    # Add correlation statistics if sufficient samples
+    if len(results_df_clustered) >= 2:
+        corr, pval = stats.pearsonr(results_df_clustered['success_rate'],
+                                   results_df_clustered['unlock_time'])
+        stats_dict = {
+            'r': corr,
+            'p-value': pval
+        }
+    else:
+        stats_dict = {
+            'warning': 'Insufficient sample size'
+        }
     add_statistical_annotations(ax, stats_dict)
     
     # Style the plot
