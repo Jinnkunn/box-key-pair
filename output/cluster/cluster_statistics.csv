@@ -1,5 +1,0 @@
-,theta_mean,theta_mean,omega_mean,omega_mean,r_mean,r_mean,motor,motor,num_unlock,num_unlock,solved,solved,unlock_time,unlock_time,success_rate,success_rate
-,mean,std,mean,std,mean,std,mean,std,mean,std,mean,sum,mean,std,mean,std
-Cluster,,,,,,,,,,,,,,,,
-0,0.097,0.042,1.221,0.005,0.056,0.028,0.98,0.026,4.165,1.25,0.626,57,234.598,68.34,0.149,0.096
-1,0.312,0.132,1.248,0.097,0.188,0.123,0.888,0.103,5.0,0.0,1.0,9,111.022,39.482,0.563,0.212
