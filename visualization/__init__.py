@@ -1,21 +1,24 @@
 """
-Visualization package for analyzing and plotting learning dynamics data.
+Visualization package for analyzing learning dynamics data.
+
+This package provides visualization tools for:
+- Individual differences analysis
+- Generative model analysis
+- Parameter visualization
+- Learning dynamics
+- Strategy patterns
+- Model validation
+- Uncertainty quantification
 """
 
-from . import parameter
-from . import learning
-from . import strategy
-from . import cluster
-from . import performance
+from . import generative
+from . import individual
 from . import utils
-from .config import setup_plot_style
+from . import config
 
 __all__ = [
-    'parameter',
-    'learning',
-    'strategy',
-    'cluster',
-    'performance',
+    'generative',
+    'individual',
     'utils',
-    'setup_plot_style'
+    'config'
 ] 

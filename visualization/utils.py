@@ -18,6 +18,7 @@ from .config import (
     LINE_STYLES,
     PLOT_DEFAULTS
 )
+import pandas as pd
 
 def calculate_confidence_interval(
     data: np.ndarray,
@@ -136,9 +137,60 @@ def setup_3d_axis(ax: Axes, title: str = None, xlabel: str = None, ylabel: str =
     ax.yaxis.pane.fill = False
     ax.zaxis.pane.fill = False
 
-def add_statistical_annotations(ax: Axes, stats_dict: Dict, loc: str = 'upper left',
-                              box: bool = True) -> None:
+def add_statistical_annotations(ax, stats_dict, loc='upper right', position=None):
     """Add statistical annotations to a plot."""
+    # Format the statistics text
+    if isinstance(stats_dict, dict):
+        # Handle dictionary input
+        stats_text = format_statistical_result_dict(stats_dict)
+    else:
+        # Handle tuple input (stat, p_val, msg)
+        stat, p_val, msg = stats_dict
+        stats_text = msg if msg else format_statistical_result(stat, p_val)
+    
+    # Set up text properties
+    bbox_props = dict(
+        boxstyle='round,pad=0.5',
+        facecolor='white',
+        alpha=0.8,
+        edgecolor='gray'
+    )
+    
+    # Check if the axis is 3D
+    is_3d = hasattr(ax, 'get_zlim')
+    
+    if position is not None:
+        # For annotations at specific positions
+        x, y = position
+        ax.text(x, y, stats_text,
+               horizontalalignment='center',
+               verticalalignment='bottom',
+               fontsize=FONT_SIZES['annotation'],
+               bbox=bbox_props)
+    elif is_3d:
+        # For 3D plots
+        x_pos = 0.05 if loc == 'upper left' else 0.95
+        y_pos = 0.95
+        z_pos = ax.get_zlim()[1]  # Get the maximum z value
+        ax.text(x_pos, y_pos, z_pos, stats_text,
+               horizontalalignment='left' if loc == 'upper left' else 'right',
+               verticalalignment='top',
+               transform=ax.transAxes,
+               fontsize=FONT_SIZES['annotation'],
+               bbox=bbox_props)
+    else:
+        # For 2D plots
+        ax.text(0.05 if loc == 'upper left' else 0.95,
+               0.95,
+               stats_text,
+               horizontalalignment='left' if loc == 'upper left' else 'right',
+               verticalalignment='top',
+               transform=ax.transAxes,
+               fontsize=FONT_SIZES['annotation'],
+               bbox=bbox_props)
+
+def format_statistical_result_dict(stats_dict: Dict) -> str:
+    """Format statistical results dictionary into a string."""
     # Format each value based on its type
     formatted_items = []
     for k, v in stats_dict.items():
@@ -147,23 +199,22 @@ def add_statistical_annotations(ax: Axes, stats_dict: Dict, loc: str = 'upper le
         else:
             formatted_items.append(f'{k}: {v}')
     
-    text = '\n'.join(formatted_items)
-    
-    bbox_props = dict(
-        facecolor='white',
-        alpha=0.9,
-        edgecolor=COLOR_PALETTE['neutral'],
-        boxstyle='round,pad=0.5'
-    ) if box else None
-    
-    ax.text(0.05 if loc == 'upper left' else 0.95,
-            0.95,
-            text,
-            transform=ax.transAxes,
-            verticalalignment='top',
-            horizontalalignment='left' if loc == 'upper left' else 'right',
-            fontsize=FONT_SIZES['annotation'],
-            bbox=bbox_props)
+    return '\n'.join(formatted_items)
+
+def format_statistical_result(stat: float, p_val: float) -> str:
+    """Format statistical test results."""
+    if np.isnan(stat) or np.isnan(p_val):
+        return "Invalid result"
+        
+    significance = ""
+    if p_val < 0.001:
+        significance = "***"
+    elif p_val < 0.01:
+        significance = "**"
+    elif p_val < 0.05:
+        significance = "*"
+        
+    return f"stat={stat:.3f}, p={p_val:.3f}{significance}"
 
 def save_figure(fig: Figure, output_path: str, **kwargs) -> None:
     """Save figure with default settings."""
@@ -187,80 +238,46 @@ def set_axis_style(ax: Axes, style: str = 'default') -> None:
             spine.set_color(COLOR_PALETTE['neutral'])
             spine.set_linewidth(1.0)
 
-def safe_statistical_test(test_type: str, *args, **kwargs) -> Tuple[float, float, str]:
+def safe_statistical_test(test_type: str, x: np.ndarray, y: np.ndarray) -> Tuple[float, float, str]:
     """
-    Safely perform statistical tests with sample size checks.
+    Safely perform statistical tests while handling edge cases.
     
     Args:
-        test_type: Type of test ('ttest_ind', 'pearsonr', 'shapiro', etc.)
-        *args: Arguments for the test
-        **kwargs: Keyword arguments for the test
-    
-    Returns:
-        Tuple[float, float, str]: (statistic, p_value, message)
-    """
-    try:
-        # Check sample sizes
-        min_samples = 3  # Minimum required samples for statistical tests
+        test_type: Type of test ('ttest_ind', 'pearsonr', etc.)
+        x: First data array
+        y: Second data array
         
+    Returns:
+        Tuple of (statistic, p_value, message)
+    """
+    # Remove NaN values
+    x = x[~np.isnan(x)]
+    y = y[~np.isnan(y)]
+    
+    # Check minimum sample sizes
+    min_samples = 2
+    if len(x) < min_samples or len(y) < min_samples:
+        return np.nan, np.nan, "Insufficient samples"
+        
+    try:
         if test_type == 'ttest_ind':
-            group1, group2 = args
-            if len(group1) < min_samples or len(group2) < min_samples:
-                return np.nan, 1.0, f"Insufficient samples (n1={len(group1)}, n2={len(group2)})"
-            stat, pval = stats.ttest_ind(*args, **kwargs)
-            
+            # Check for constant values
+            if np.std(x) == 0 or np.std(y) == 0:
+                return np.nan, np.nan, "Constant values in samples"
+            stat, p_val = stats.ttest_ind(x, y, nan_policy='omit')
         elif test_type == 'pearsonr':
-            x, y = args
-            if len(x) < min_samples:
-                return np.nan, 1.0, f"Insufficient samples (n={len(x)})"
-            stat, pval = stats.pearsonr(*args, **kwargs)
-            
-        elif test_type == 'shapiro':
-            data = args[0]
-            if len(data) < min_samples:
-                return np.nan, 1.0, f"Insufficient samples (n={len(data)})"
-            stat, pval = stats.shapiro(*args, **kwargs)
-            
-        elif test_type == 'f_oneway':
-            min_group_size = min(len(group) for group in args)
-            if min_group_size < min_samples:
-                return np.nan, 1.0, f"Insufficient samples in one or more groups (min n={min_group_size})"
-            stat, pval = stats.f_oneway(*args, **kwargs)
-            
+            # Check for constant values
+            if np.std(x) == 0 or np.std(y) == 0:
+                return np.nan, np.nan, "Constant values in samples"
+            stat, p_val = stats.pearsonr(x, y)
         else:
             raise ValueError(f"Unsupported test type: {test_type}")
-        
-        return stat, pval, "Test performed successfully"
+            
+        # Handle invalid results
+        if np.isnan(stat) or np.isnan(p_val):
+            return np.nan, np.nan, "Invalid test result"
+            
+        return stat, p_val, format_statistical_result(stat, p_val)
         
     except Exception as e:
-        return np.nan, 1.0, f"Error performing test: {str(e)}"
-
-def format_statistical_result(stat: float, pval: float, msg: str, test_name: str = "") -> str:
-    """
-    Format statistical test results into a readable string.
-    
-    Args:
-        stat: Test statistic
-        pval: P-value
-        msg: Message from the test
-        test_name: Name of the test (optional)
-    
-    Returns:
-        str: Formatted result string
-    """
-    if np.isnan(stat):
-        return f"{test_name}: {msg}"
-    
-    significance = ""
-    if pval < 0.001:
-        significance = "***"
-    elif pval < 0.01:
-        significance = "**"
-    elif pval < 0.05:
-        significance = "*"
-    
-    result = f"{test_name}: stat={stat:.3f}, p={pval:.3f}{significance}"
-    if msg != "Test performed successfully":
-        result += f" ({msg})"
-    
-    return result 
+        return np.nan, np.nan, f"Error: {str(e)}" 

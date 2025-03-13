@@ -1,17 +1,22 @@
 """
-Reports package for generating analysis reports from learning dynamics data.
+Reports package for analyzing learning dynamics data.
+
+This package provides tools for:
+- Individual differences analysis
+- Generative model analysis
+- Parameter analysis
+- Learning dynamics
+- Strategy analysis
+- Model validation
+- Uncertainty quantification
 """
 
-from . import parameter
-from . import learning
-from . import strategy
-from . import cluster
-from . import performance
+from . import generative
+from . import individual
+from . import utils
 
 __all__ = [
-    'parameter',
-    'learning',
-    'strategy',
-    'cluster',
-    'performance'
+    'generative',
+    'individual',
+    'utils'
 ] 

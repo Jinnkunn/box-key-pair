@@ -29,6 +29,10 @@ COLOR_PALETTE = {
     'cluster_0': '#2E86C1',  # Blue for cluster 0
     'cluster_1': '#28B463',  # Green for cluster 1
     'cluster_2': '#E74C3C',  # Red for cluster 2
+    'primary': '#3498DB',    # Primary color (blue)
+    'secondary': '#2ECC71',  # Secondary color (green)
+    'tertiary': '#F39C12',   # Tertiary color (orange)
+    'categorical': ['#3498DB', '#2ECC71', '#E74C3C', '#9B59B6', '#F39C12']  # Colors for categorical data
 }
 
 # Figure sizes for different plot types
@@ -136,7 +140,8 @@ CUSTOM_COLORMAPS = {
     'sequence': 'viridis',
     'diverging': 'RdYlBu',
     'continuous': 'plasma',
-    'cluster': 'viridis'     # Colormap for cluster visualization
+    'cluster': 'viridis',
+    'sequential': 'viridis'  # Sequential colormap for ordered data
 }
 
 # Statistical visualization settings
